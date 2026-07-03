@@ -1,0 +1,135 @@
+.sl-page {
+  max-width: 800px;
+}
+
+.sl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.sl-header__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.sl-header__create {
+  padding: 0.5rem 1.1rem;
+  background: linear-gradient(135deg, var(--color-primary), #7c3aed);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--color-primary-glow);
+  transition: opacity 0.15s, transform 0.1s;
+  font-family: inherit;
+}
+
+.sl-header__create:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.sl-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sl-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-card);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  text-align: left;
+  font-family: inherit;
+  width: 100%;
+}
+
+.sl-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.sl-card__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.sl-card__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sl-card__name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.15rem;
+}
+
+.sl-card__key {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.sl-card__members {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.sl-card__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.sl-card__avatar:nth-child(n+2) {
+  margin-left: -6px;
+}
+
+.sl-card__avatar--more {
+  background: #e2e8f0;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+}
+
+.sl-card__no-members {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+}

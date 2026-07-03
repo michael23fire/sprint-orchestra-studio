@@ -1,0 +1,106 @@
+.assignee-avatar-host,
+.hover-tip-host {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+/* Hover only — avoid :focus-within or tooltips stick after mouse click leaves focus on the button */
+.assignee-avatar-host:hover .assignee-avatar__popup,
+.assignee-avatar-host:has(.assignee-avatar:focus-visible) .assignee-avatar__popup,
+.hover-tip-host:hover .hover-tip__popup,
+.hover-tip-host:has(button:focus-visible) .hover-tip__popup {
+  visibility: visible;
+  opacity: 1;
+}
+
+.assignee-avatar {
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+  font-family: inherit;
+  padding: 0;
+  cursor: inherit;
+  box-sizing: border-box;
+}
+
+button.assignee-avatar {
+  cursor: pointer;
+}
+
+.assignee-avatar--card {
+  width: 26px;
+  height: 26px;
+  font-size: 0.6875rem;
+}
+
+.assignee-avatar--toolbar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.6875rem;
+}
+
+.assignee-avatar--toolbar.assignee-avatar--active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-glow), 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.assignee-avatar--card:not(.assignee-avatar--no-hover):hover,
+.assignee-avatar--toolbar:not(.assignee-avatar--no-hover):hover {
+  transform: scale(1.08);
+  z-index: 2;
+}
+
+.assignee-avatar:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-glow);
+}
+
+.assignee-avatar__popup,
+.hover-tip__popup {
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease, visibility 0.12s;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.35rem 0.5rem;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.35);
+  z-index: 50;
+  pointer-events: none;
+  max-width: min(280px, 70vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assignee-avatar__popup::after,
+.hover-tip__popup::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -6px;
+  border: 6px solid transparent;
+  border-top-color: #1e293b;
+}
+
+.assignee-avatar-host--no-popup .assignee-avatar__popup {
+  display: none;
+}

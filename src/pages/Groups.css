@@ -1,0 +1,246 @@
+.groups-page { padding: 1.5rem 2rem; }
+
+.groups-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.groups-header__title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #172b4d;
+  margin: 0;
+}
+
+.groups-header__create {
+  padding: 0.5rem 1rem;
+  background: #0052cc;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.groups-header__create:hover { background: #0747a6; }
+
+.groups-create-card {
+  background: #fff;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.groups-input {
+  padding: 0.5rem 0.75rem;
+  border: 2px solid #dfe1e6;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: #172b4d;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.groups-input:focus {
+  border-color: #0052cc;
+  box-shadow: 0 0 0 3px rgba(0, 82, 204, 0.1);
+}
+
+.groups-create-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.groups-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 5px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+
+.groups-btn--primary { background: #0052cc; color: #fff; }
+.groups-btn--primary:hover { background: #0747a6; }
+.groups-btn--primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.groups-btn--ghost { background: transparent; color: #5e6c84; }
+.groups-btn--ghost:hover { background: #f4f5f7; }
+
+.groups-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.groups-empty {
+  text-align: center;
+  color: #5e6c84;
+  font-size: 0.875rem;
+  padding: 2rem 0;
+  margin: 0;
+}
+
+.groups-card {
+  background: #fff;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+
+.groups-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); }
+
+.groups-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.groups-card__icon {
+  color: #5e6c84;
+  flex-shrink: 0;
+}
+
+.groups-card__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.groups-card__name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #172b4d;
+}
+
+.groups-card__desc {
+  font-size: 0.75rem;
+  color: #5e6c84;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.groups-card__count {
+  font-size: 0.75rem;
+  color: #5e6c84;
+  white-space: nowrap;
+}
+
+.groups-card__avatars {
+  display: flex;
+  margin-left: 0.25rem;
+}
+
+.groups-card__avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  margin-left: -4px;
+  border: 2px solid #fff;
+}
+
+.groups-card__avatar:first-child { margin-left: 0; }
+
+.groups-card__delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #a5adba;
+  font-size: 0.75rem;
+  padding: 0.25rem;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.groups-card__header:hover .groups-card__delete { opacity: 1; }
+.groups-card__delete:hover { color: #de350b; }
+
+.groups-card__body {
+  border-top: 1px solid #dfe1e6;
+  padding: 0.75rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.groups-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.groups-member-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.groups-member-item:hover { background: #f4f5f7; }
+
+.groups-member-item--active { background: #e9f2ff; }
+
+.groups-member-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.groups-member-name {
+  flex: 1;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #172b4d;
+}
+
+.groups-member-btn {
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #dfe1e6;
+  background: #fff;
+  color: #0052cc;
+  transition: background 0.15s;
+}
+
+.groups-member-btn:hover { background: #deebff; }
+
+.groups-member-btn--remove {
+  color: #de350b;
+  border-color: #ffbdad;
+}
+
+.groups-member-btn--remove:hover { background: #ffebe6; }
