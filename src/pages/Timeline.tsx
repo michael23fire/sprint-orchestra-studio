@@ -394,15 +394,29 @@ export function Timeline() {
   }, [days, dateToPx]);
 
   const dayTicks = useMemo(() => {
-    // Weeks scale: every single day. Months scale: week starts only (too dense otherwise).
-    const step = scale === 'weeks' ? 1 : 7;
-    const ticks: { date: Date; left: number }[] = [];
-    for (let i = 0; i < days.length; i += step) {
-      const d = days[i];
-      ticks.push({ date: d, left: LABEL_COL + dateToPx(d) });
+    if (scale === 'weeks') {
+      return days.map((d) => ({ date: d, left: LABEL_COL + dateToPx(d) }));
     }
-    return ticks;
+    // Months: tick on Mondays only. Labels must sit on that day — not centered in a
+    // 7-day-wide cell — otherwise e.g. Jul 30 appears under the August header.
+    return days
+      .filter((d) => d.getDay() === 1)
+      .map((d) => ({ date: d, left: LABEL_COL + dateToPx(d) }));
   }, [days, scale, dateToPx]);
+
+  /** Monday starts — drawn only in Weeks scale so the date bar reads as week blocks. */
+  const weekBoundaryLefts = useMemo(() => {
+    if (scale !== 'weeks') return [] as number[];
+    return days
+      .filter((d) => d.getDay() === 1)
+      .map((d) => LABEL_COL + dateToPx(d));
+  }, [days, scale, dateToPx]);
+
+  /** 1st of each month — drawn in Months scale (and Weeks) so month blocks are obvious. */
+  const monthBoundaryLefts = useMemo(
+    () => monthTicks.map((t) => t.left),
+    [monthTicks],
+  );
 
   const issueBar = (issue: Ticket) => {
     const bar = barStyle(issue);
@@ -619,20 +633,49 @@ export function Timeline() {
             <div className="timeline-today-line" style={{ left: `${todayLineLeft}px` }} aria-hidden>
               <span className="timeline-today-line__tag">Today</span>
             </div>
+            {weekBoundaryLefts.map((left) => (
+              <div
+                key={`week-${left}`}
+                className="timeline-week-line"
+                style={{ left: `${left}px` }}
+                aria-hidden
+              />
+            ))}
+            {monthBoundaryLefts.map((left) => (
+              <div
+                key={`month-${left}`}
+                className="timeline-month-line"
+                style={{ left: `${left}px` }}
+                aria-hidden
+              />
+            ))}
 
             <div className={`timeline-grid-header${view.showSprints ? ' timeline-grid-header--with-sprints' : ''}`}>
               {monthTicks.map((t) => (
-                <div key={t.key} className="timeline-grid-header__month" style={{ left: `${t.left}px` }}>
+                <div
+                  key={t.key}
+                  className={`timeline-grid-header__month${scale === 'months' ? ' is-month-boundary' : ''}`}
+                  style={{ left: `${t.left}px` }}
+                >
                   {t.label}
                 </div>
               ))}
               {dayTicks.map((t) => (
                 <div
                   key={t.date.toISOString()}
-                  className={`timeline-grid-header__day${
-                    scale === 'weeks' && (t.date.getDay() === 0 || t.date.getDay() === 6) ? ' is-weekend' : ''
-                  }`}
-                  style={{ left: `${t.left}px`, width: `${dayWidth * (scale === 'weeks' ? 1 : 7)}px` }}
+                  className={[
+                    'timeline-grid-header__day',
+                    scale === 'weeks' && (t.date.getDay() === 0 || t.date.getDay() === 6) ? 'is-weekend' : '',
+                    scale === 'weeks' && t.date.getDay() === 1 ? 'is-week-start' : '',
+                    scale === 'months' ? 'is-month-week' : '',
+                    scale === 'months' && t.date.getDate() === 1 ? 'is-month-start' : '',
+                  ].filter(Boolean).join(' ')}
+                  style={{
+                    left: `${t.left}px`,
+                    // Weeks: one day cell. Months: narrow marker on the Monday itself
+                    // (not a 7-day band that can straddle the month divider).
+                    width: `${dayWidth * (scale === 'weeks' ? 1 : 2)}px`,
+                  }}
                 >
                   {t.date.getDate()}
                 </div>

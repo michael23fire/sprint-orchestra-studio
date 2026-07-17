@@ -241,6 +241,12 @@
   line-height: 1.2;
 }
 
+.timeline-grid-header__month.is-month-boundary {
+  border-left-color: #64748b;
+  border-left-width: 1.5px;
+  padding-left: 6px;
+}
+
 .timeline-grid-header__day {
   position: absolute;
   top: 22px;
@@ -255,6 +261,43 @@
 
 .timeline-grid-header__day.is-weekend {
   color: #b6c2d4;
+}
+
+.timeline-grid-header__day.is-week-start {
+  border-left: 1px solid #94a3b8;
+  color: #334155;
+  font-weight: 700;
+}
+
+.timeline-grid-header__day.is-month-start {
+  border-left: 1.5px solid #64748b;
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.timeline-grid-header__day.is-month-week {
+  justify-content: flex-start;
+  padding-left: 2px;
+}
+
+.timeline-week-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid #e2e8f0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.timeline-month-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid #cbd5e1;
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* ---------- Sprint lane (Jira-style, inside sticky header) ---------- */
