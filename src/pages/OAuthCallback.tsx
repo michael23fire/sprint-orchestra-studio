@@ -31,7 +31,7 @@ export function OAuthCallback() {
     (async () => {
       try {
         await applyOAuthSession(token);
-        navigate('/', { replace: true });
+        navigate('/spaces', { replace: true });
       } catch {
         setMessage('Could not complete sign-in. Redirecting…');
         setTimeout(() => navigate('/login?error=oauth_session', { replace: true }), 800);

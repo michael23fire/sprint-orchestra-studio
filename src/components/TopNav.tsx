@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCurrentUser } from '../context/UserContext';
 import { CreateTaskModal } from './CreateTaskModal';
+import { IssueQuickSearch } from './IssueQuickSearch';
 
 export function TopNav() {
   const { currentUser, logout } = useCurrentUser();
@@ -33,20 +34,11 @@ export function TopNav() {
     <>
       <header className="top-nav">
         <div className="top-nav__logo">Jira</div>
-        <div className="top-nav__search">
-          <input type="search" placeholder="Search" className="top-nav__search-input" aria-label="Search" />
-        </div>
+        <IssueQuickSearch />
         <button type="button" className="top-nav__create" onClick={() => setShowCreate(true)}>
           Create
         </button>
         <div className="top-nav__actions">
-          <button type="button" className="top-nav__icon" aria-label="Notifications">
-            <span aria-hidden>⌘</span>
-          </button>
-          <button type="button" className="top-nav__icon" aria-label="Settings">
-            ⚙
-          </button>
-
           <div className="user-menu" ref={menuRef}>
             <button
               type="button"

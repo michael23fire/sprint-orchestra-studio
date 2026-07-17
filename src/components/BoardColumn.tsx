@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Droppable, Draggable } from '@hello-pangea/dnd';
 import type { Ticket } from '../types/ticket';
-import { getSameStatusSubtasks } from '../utils/ticketHierarchy';
+import { getBoardSubtasks, getOtherStatusSubtasks, resolveEpicKey } from '../utils/ticketHierarchy';
 import { buildFlatDragItems, orderRootsBySaved, type FlatDragItem } from '../utils/boardFlatItems';
 import { TicketCard } from './TicketCard';
 
@@ -13,6 +13,8 @@ interface BoardViewSettings {
   showAssignee: boolean;
   showWorkType: boolean;
   showPriority: boolean;
+  showLabels: boolean;
+  showStoryPoints: boolean;
 }
 
 interface BoardColumnProps {
@@ -41,17 +43,8 @@ function epicKeyForTicket(
   epicLookupTickets: Ticket[] | undefined,
   allTickets: Ticket[],
 ): string | undefined {
-  const pool = epicLookupTickets ?? allTickets;
-  if (ticket.parentId) {
-    const epic = pool.find((t) => t.id === ticket.parentId && t.issueType === 'epic');
-    if (epic) return epic.id;
-    const parent = allTickets.find((t) => t.id === ticket.parentId);
-    if (parent?.parentId) {
-      const epicViaParent = pool.find((t) => t.id === parent.parentId && t.issueType === 'epic');
-      if (epicViaParent) return epicViaParent.id;
-    }
-  }
-  return undefined;
+  // Prefer full space list so subtasks inherit epic even when filters hide the parent.
+  return resolveEpicKey(ticket, epicLookupTickets ?? allTickets);
 }
 
 function renderDraggableCard(
@@ -67,10 +60,12 @@ function renderDraggableCard(
 ) {
   if (item.kind === 'parent') {
     const ticket = item.ticket;
-    const nested = getSameStatusSubtasks(ticket, allTickets);
+    const allChildren = getBoardSubtasks(ticket, allTickets);
+    const otherColumnChildren = getOtherStatusSubtasks(ticket, allTickets);
     const epicKey = epicKeyForTicket(ticket, epicLookupTickets, allTickets);
     const subtasksCollapsed = collapsedParents.has(ticket.id);
-    const showFold = !hideSubtasksOnBoard && nested.length > 0;
+    // Fold whenever this parent has board subtasks — not only same-column ones.
+    const showFold = !hideSubtasksOnBoard && allChildren.length > 0;
     return (
       <Draggable key={ticket.id} draggableId={ticket.id} index={index}>
         {(provided, snapshot) => (
@@ -106,12 +101,19 @@ function renderDraggableCard(
                 <TicketCard
                   ticket={ticket}
                   variant="parent"
-                  hiddenChildCount={hideSubtasksOnBoard && nested.length > 0 ? nested.length : undefined}
+                  hiddenChildCount={hideSubtasksOnBoard && allChildren.length > 0 ? allChildren.length : undefined}
+                  otherColumnChildCount={
+                    !hideSubtasksOnBoard && otherColumnChildren.length > 0
+                      ? otherColumnChildren.length
+                      : undefined
+                  }
                   showIssueKey={viewSettings.showIssueKey}
                   showDueDate={viewSettings.showDueDate}
                   showAssignee={viewSettings.showAssignee}
                   showWorkType={viewSettings.showWorkType}
                   showPriority={viewSettings.showPriority}
+                  showLabels={viewSettings.showLabels}
+                  showStoryPoints={viewSettings.showStoryPoints}
                   epicKey={epicKey}
                   showEpic={viewSettings.showEpic}
                   onClick={() => onTicketClick(ticket.id)}
@@ -127,7 +129,7 @@ function renderDraggableCard(
   if (item.kind === 'nested-sub') {
     const sub = item.ticket;
     const epicKey = epicKeyForTicket(sub, epicLookupTickets, allTickets);
-    const nestedKids = getSameStatusSubtasks(sub, allTickets);
+    const nestedKids = getBoardSubtasks(sub, allTickets);
     const subtasksCollapsed = collapsedParents.has(sub.id);
     const showFold = !hideSubtasksOnBoard && nestedKids.length > 0;
     const depthPx = Math.max(0, item.depth - 1) * 12;
@@ -180,6 +182,8 @@ function renderDraggableCard(
                   showAssignee={viewSettings.showAssignee}
                   showWorkType={viewSettings.showWorkType}
                   showPriority={viewSettings.showPriority}
+                  showLabels={viewSettings.showLabels}
+                  showStoryPoints={viewSettings.showStoryPoints}
                   epicKey={epicKey}
                   showEpic={viewSettings.showEpic}
                   onClick={() => onTicketClick(sub.id)}
@@ -220,6 +224,8 @@ function renderDraggableCard(
                 showAssignee={viewSettings.showAssignee}
                 showWorkType={viewSettings.showWorkType}
                 showPriority={viewSettings.showPriority}
+                showLabels={viewSettings.showLabels}
+                showStoryPoints={viewSettings.showStoryPoints}
                 epicKey={epicKey}
                 showEpic={viewSettings.showEpic}
                 onClick={() => onTicketClick(sub.id)}
@@ -265,6 +271,14 @@ export function BoardColumn({
         const bUnassigned = b.toLowerCase() === 'unassigned';
         if (aUnassigned && !bUnassigned) return 1;
         if (!aUnassigned && bUnassigned) return -1;
+        return a.localeCompare(b);
+      });
+    } else if (groupMode === 'epic') {
+      entries.sort(([a], [b]) => {
+        const aHasNoEpic = a.toLowerCase() === 'no epic';
+        const bHasNoEpic = b.toLowerCase() === 'no epic';
+        if (aHasNoEpic && !bHasNoEpic) return 1;
+        if (!aHasNoEpic && bHasNoEpic) return -1;
         return a.localeCompare(b);
       });
     } else if (groupMode === 'subtask') {

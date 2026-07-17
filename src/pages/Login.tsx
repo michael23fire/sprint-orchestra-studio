@@ -4,6 +4,21 @@ import { useCurrentUser } from '../context/UserContext';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 
+const DEFAULT_AFTER_LOGIN = '/spaces';
+
+/** Restore only meaningful deep links; otherwise land on Spaces. */
+function resolveAfterLoginPath(requested?: string): string {
+  if (!requested || requested === '/' || requested === '/login') {
+    return DEFAULT_AFTER_LOGIN;
+  }
+  // Ticket deep links are worth restoring after auth.
+  if (requested.startsWith('/ticket/')) {
+    return requested;
+  }
+  // Everything else (including /groups) → Spaces home.
+  return DEFAULT_AFTER_LOGIN;
+}
+
 function GithubMark() {
   return <span className="login-google-icon" aria-hidden>🐙</span>;
 }
@@ -20,7 +35,11 @@ export function Login() {
   } = useCurrentUser();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/';
+  // Prefer Spaces as the post-login home (Jira-like: pick a project first).
+  // Only restore deep links (e.g. /ticket/RPP-1); ignore /groups and other nav pages
+  // so a previous visit to Groups does not become the sticky landing page.
+  const requestedFrom = (location.state as { from?: { pathname: string } })?.from?.pathname;
+  const afterLoginPath = resolveAfterLoginPath(requestedFrom);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -36,7 +55,7 @@ export function Login() {
   }, [location.search]);
 
   if (isAuthenticated) {
-    return <Navigate to={from} replace />;
+    return <Navigate to={afterLoginPath} replace />;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -48,7 +67,7 @@ export function Login() {
     if (err) {
       setError(err);
     } else {
-      navigate(from, { replace: true });
+      navigate(afterLoginPath, { replace: true });
     }
   }
 

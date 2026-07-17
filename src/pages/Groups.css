@@ -137,11 +137,15 @@
   font-size: 0.75rem;
   color: #5e6c84;
   white-space: nowrap;
+  min-width: 4.75rem;
+  text-align: right;
 }
 
 .groups-card__avatars {
   display: flex;
   margin-left: 0.25rem;
+  min-width: 5.5rem;
+  justify-content: flex-end;
 }
 
 .groups-card__avatar {
@@ -160,6 +164,16 @@
 
 .groups-card__avatar:first-child { margin-left: 0; }
 
+.groups-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  width: 4.25rem;
+  min-height: 30px;
+}
+
 .groups-card__delete {
   background: none;
   border: none;
@@ -174,6 +188,72 @@
 
 .groups-card__header:hover .groups-card__delete { opacity: 1; }
 .groups-card__delete:hover { color: #de350b; }
+
+.groups-card__edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f7fb 100%);
+  box-shadow:
+    0 0 0 1px rgba(9, 30, 66, 0.08),
+    0 1px 2px rgba(9, 30, 66, 0.08);
+  color: #505f79;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(1px);
+  transition: opacity 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.groups-card__header:hover .groups-card__edit { opacity: 1; }
+
+.groups-card__edit:hover {
+  color: #0052cc;
+  background: linear-gradient(180deg, #ffffff 0%, #ebf2ff 100%);
+  box-shadow:
+    0 0 0 1px rgba(0, 82, 204, 0.22),
+    0 4px 10px rgba(0, 82, 204, 0.12);
+  transform: translateY(0);
+}
+
+.groups-card__edit:active {
+  transform: translateY(1px);
+  box-shadow:
+    0 0 0 1px rgba(0, 82, 204, 0.18),
+    0 1px 2px rgba(9, 30, 66, 0.08);
+}
+
+.groups-edit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.15rem 0;
+}
+
+.groups-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.groups-edit-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #5e6c84;
+}
+
+.groups-edit-error {
+  margin: 0;
+  color: #de350b;
+  font-size: 0.75rem;
+}
 
 .groups-card__body {
   border-top: 1px solid #dfe1e6;
@@ -215,6 +295,49 @@
   font-size: 0.7rem;
   font-weight: 700;
   flex-shrink: 0;
+}
+
+.groups-card__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.groups-card__admin-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+
+.groups-readonly-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.groups-member-role {
+  margin-left: 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 999px;
+  padding: 0.08rem 0.4rem;
+  vertical-align: middle;
+}
+
+.groups-member-locked {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-left: auto;
 }
 
 .groups-member-name {

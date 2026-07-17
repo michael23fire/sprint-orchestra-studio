@@ -42,9 +42,6 @@ export function JiraLayout() {
               {label}
             </NavLink>
           ))}
-          <button type="button" className="jira-tab jira-tab--add" aria-label="Add view">
-            +
-          </button>
         </nav>
         <Outlet />
       </main>

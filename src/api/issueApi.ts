@@ -70,6 +70,8 @@ export interface IssueDto {
   dueDate: string | null;
   issueOrder: number;
   labels: string[];
+  /** Supported by newer backends; older ones persist this via the reserved Flagged label. */
+  flagged?: boolean;
   comments: CommentDto[];
   childKeys: string[];
   linkedIssues: IssueLinkDto[];
@@ -77,6 +79,8 @@ export interface IssueDto {
   codeLinks: IssueCodeLinkDto[];
   /** ISO instant — issue row creation time (for lifecycle). */
   createdAt: string | null;
+  /** ISO instant — last issue row update. */
+  updatedAt: string | null;
 }
 
 export interface CreateIssueRequest {

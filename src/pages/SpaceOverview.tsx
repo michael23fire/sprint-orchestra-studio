@@ -6,6 +6,7 @@ import { useCurrentUser } from '../context/UserContext';
 import { SpacePeopleModal } from '../components/SpacePeopleModal';
 import { ISSUE_TYPE_META } from '../types/ticket';
 import type { IssueType } from '../types/ticket';
+import { effectiveSpaceMemberIds } from '../types/space';
 import './SpaceOverview.css';
 
 function IssueIcon({ type }: { type?: IssueType }) {
@@ -28,7 +29,8 @@ export function SpaceOverview() {
     void hydrateSpace(currentSpace.id);
   }, [showPeople, currentSpace.id, hydrateSpace]);
 
-  const members = users.filter((u) => currentSpace.members.includes(u.id));
+  const effectiveMemberIdSet = new Set(effectiveSpaceMemberIds(currentSpace));
+  const members = users.filter((u) => effectiveMemberIdSet.has(u.id));
   const admin = users.find((u) => u.id === currentSpace.ownerId);
   const activeSprint = sprints.find((s) => s.status === 'active');
   const totalTickets = tickets.length;

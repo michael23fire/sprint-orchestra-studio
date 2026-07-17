@@ -71,6 +71,23 @@
   border-color: #cbd5e1;
 }
 
+/* Atlaskit-style default button — matches Jira Cloud backlog "Complete sprint" */
+.bl-btn--default {
+  background: #fff;
+  color: #172b4d;
+  border: 1px solid rgba(9, 30, 66, 0.14);
+  box-shadow: 0 1px 1px rgba(9, 30, 66, 0.08);
+}
+
+.bl-btn--default:hover {
+  background: rgba(9, 30, 66, 0.04);
+  border-color: rgba(9, 30, 66, 0.2);
+}
+
+.bl-btn--default:active {
+  background: rgba(9, 30, 66, 0.08);
+}
+
 .bl-btn--ghost {
   background: #f1f5f9;
   color: var(--text-secondary);
@@ -92,7 +109,8 @@
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--border);
-  overflow: hidden;
+  /* Keep visible so estimate hover popup is not clipped above the header. */
+  overflow: visible;
 }
 
 .bl-sprint--backlog {
@@ -176,6 +194,129 @@
   color: var(--text-muted);
 }
 
+.bl-sprint__estimates {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.bl-sprint__estimate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.bl-sprint__estimate--todo {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.bl-sprint__estimate--progress {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.bl-sprint__estimate--done {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.bl-sprint__estimate-total {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-left: 0.1rem;
+}
+
+.bl-sprint__estimate-popup {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 10px));
+  white-space: normal;
+  min-width: 15.5rem;
+  max-width: 20rem;
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: left;
+  z-index: 1000;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.35);
+  pointer-events: none;
+}
+
+.bl-sprint__estimate-popup::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -6px;
+  border: 6px solid transparent;
+  border-top-color: #1e293b;
+}
+
+.bl-sprint__estimate-popup-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.1rem;
+}
+
+.bl-sprint__estimate-popup-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  font-size: 0.74rem;
+  color: #f8fafc;
+}
+
+.bl-sprint__estimate-popup-row strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.bl-sprint__estimate-popup-row em {
+  font-style: normal;
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.bl-sprint__estimate-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.bl-sprint__estimate-dot--todo { background: #94a3b8; }
+.bl-sprint__estimate-dot--progress { background: #3b82f6; }
+.bl-sprint__estimate-dot--done { background: #22c55e; }
+
+.bl-sprint__estimate-popup-foot {
+  margin-top: 0.15rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  font-size: 0.65rem;
+  line-height: 1.35;
+  color: #94a3b8;
+}
+
 .bl-sprint__progress-wrap {
   display: flex;
   align-items: center;
@@ -210,6 +351,158 @@
   display: flex;
   gap: 0.5rem;
   flex-shrink: 0;
+}
+
+/* ─── Sprint more menu (⋯) ─── */
+.bl-sprint-more {
+  position: relative;
+}
+
+.bl-sprint-more__btn {
+  padding: 0.3rem 0.55rem;
+  line-height: 1;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.bl-sprint-more__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-lift);
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  z-index: 20;
+}
+
+.bl-sprint-more__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+
+.bl-sprint-more__item:hover {
+  background: #f1f5f9;
+}
+
+.bl-sprint-more__item--danger {
+  color: #dc2626;
+}
+
+.bl-sprint-more__item--danger:hover {
+  background: #fef2f2;
+}
+
+.bl-sprint-more__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bl-sprint-more__divider {
+  height: 1px;
+  margin: 0.25rem 0.35rem;
+  background: var(--border);
+}
+
+.bl-closed {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.bl-closed__header-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid transparent;
+}
+
+.bl-closed__header-row--open {
+  border-bottom-color: var(--border);
+}
+
+.bl-closed__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.bl-closed__header:hover {
+  background: #f1f5f9;
+}
+
+.bl-closed__toggle-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  margin-right: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text-secondary);
+  font: 600 0.75rem/1.2 inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.bl-closed__toggle-all:hover {
+  border-color: #b8c4d6;
+  background: #f1f5f9;
+  color: var(--text-primary);
+}
+
+.bl-closed__toggle-all:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+.bl-closed__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bl-closed__count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+
+.bl-closed__body {
+  padding: 0 0.5rem 0.5rem;
+}
+
+.bl-closed__body .bl-sprint {
+  margin-bottom: 0.5rem;
 }
 
 .bl-sprint__goal {
@@ -367,6 +660,12 @@
   padding: 0.15rem 0.45rem;
   border-radius: 20px;
   white-space: nowrap;
+}
+
+.bl-row__label--more {
+  color: #44546f;
+  background: #eef1f5;
+  cursor: help;
 }
 
 .bl-row__status {
@@ -565,4 +864,11 @@
   justify-content: flex-end;
   gap: 0.625rem;
   padding: 0 1.5rem 1.5rem;
+}
+
+.bl-modal__error {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: #b91c1c;
+  line-height: 1.35;
 }

@@ -1,7 +1,8 @@
 import type { Ticket } from '../types/ticket';
-import { ISSUE_TYPE_META, PRIORITY_META } from '../types/ticket';
+import { ISSUE_TYPE_META, LABEL_COLORS, PRIORITY_META, labelsForIssueType } from '../types/ticket';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { EpicPill, IssueKeyChip } from './IssueKeyChip';
+import { formatDueDateWithTime, parseDueDate } from '../utils/dueDate';
 
 const CalendarIcon = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
@@ -16,11 +17,15 @@ interface TicketCardProps {
   variant?: 'default' | 'subtask' | 'parent';
   /** When board hides nested children, show how many exist (open detail to view). */
   hiddenChildCount?: number;
+  /** Same-status children are nested; count of siblings living in other status columns. */
+  otherColumnChildCount?: number;
   showIssueKey?: boolean;
   showDueDate?: boolean;
   showAssignee?: boolean;
   showWorkType?: boolean;
   showPriority?: boolean;
+  showLabels?: boolean;
+  showStoryPoints?: boolean;
   epicKey?: string;
   showEpic?: boolean;
   /** When a subtask sits in a different column than its parent (board), show parent issue key — common Jira-style cue. */
@@ -32,8 +37,8 @@ type DueLevel = 'safe' | 'warning' | 'danger' | 'overdue' | 'done' | 'default';
 function dueLevelFor(ticket: Ticket): DueLevel {
   if (!ticket.dueDate) return 'default';
   if (ticket.status === 'done') return 'done';
-  const due = new Date(ticket.dueDate);
-  if (Number.isNaN(due.getTime())) return 'default';
+  const due = parseDueDate(ticket.dueDate);
+  if (!due) return 'default';
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   due.setHours(0, 0, 0, 0);
@@ -46,8 +51,8 @@ function dueLevelFor(ticket: Ticket): DueLevel {
 
 function dueCountdownText(ticket: Ticket): string | null {
   if (!ticket.dueDate || ticket.status === 'done') return null;
-  const due = new Date(ticket.dueDate);
-  if (Number.isNaN(due.getTime())) return null;
+  const due = parseDueDate(ticket.dueDate);
+  if (!due) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   due.setHours(0, 0, 0, 0);
@@ -66,11 +71,14 @@ export function TicketCard({
   onClick,
   variant = 'default',
   hiddenChildCount,
+  otherColumnChildCount,
   showIssueKey = true,
   showDueDate = true,
   showAssignee = true,
   showWorkType = true,
   showPriority = true,
+  showLabels = true,
+  showStoryPoints = true,
   epicKey,
   showEpic = true,
   parentIssueKey,
@@ -85,8 +93,9 @@ export function TicketCard({
   const priorityMeta = ticket.priority ? PRIORITY_META[ticket.priority] : null;
   const dueLevel = dueLevelFor(ticket);
   const dueCountdown = dueCountdownText(ticket);
+  const displayLabels = labelsForIssueType(ticket.issueType, ticket.labels);
 
-  const articleClass = `ticket-card ${isSub ? 'ticket-card--subtask' : ''} ${showParentLink ? 'ticket-card--subtask-detached' : ''} ${isParent ? 'ticket-card--parent' : ''}`;
+  const articleClass = `ticket-card ${isSub ? 'ticket-card--subtask' : ''} ${showParentLink ? 'ticket-card--subtask-detached' : ''} ${isParent ? 'ticket-card--parent' : ''} ${ticket.flagged ? 'ticket-card--flagged' : ''}`;
 
   const cardInner = (
     <>
@@ -114,13 +123,18 @@ export function TicketCard({
                 )}
               </>
             )}
+            {ticket.flagged && (
+              <span className="ticket-card__flag" title="Flagged — needs attention" aria-label="Flagged">
+                ⚑
+              </span>
+            )}
           </div>
         )}
         <h3 className="ticket-card__title">{ticket.title}</h3>
       </header>
 
       <div className="ticket-card__details">
-        {(showWorkType || (showPriority && priorityMeta)) && (
+        {(showWorkType || (showPriority && priorityMeta) || (showStoryPoints && ticket.storyPoints != null)) && (
           <div className="ticket-card__badges">
             {showWorkType && (
               <span className="ticket-card__badge" style={{ color: typeMeta.color, borderColor: `${typeMeta.color}55`, background: `${typeMeta.color}14` }}>
@@ -134,6 +148,14 @@ export function TicketCard({
                 {priorityMeta.label}
               </span>
             )}
+            {showStoryPoints && ticket.storyPoints != null && (
+              <span
+                className="ticket-card__badge ticket-card__badge--points"
+                title={`${ticket.storyPoints} story point${ticket.storyPoints === 1 ? '' : 's'}`}
+              >
+                {ticket.storyPoints} pts
+              </span>
+            )}
           </div>
         )}
         {showEpic && epicKey && (
@@ -141,12 +163,32 @@ export function TicketCard({
             <EpicPill epicKey={epicKey} />
           </div>
         )}
+        {showLabels && displayLabels.length > 0 && (
+          <div className="ticket-card__labels" aria-label={`Labels: ${displayLabels.join(', ')}`}>
+            {displayLabels.slice(0, 2).map((label) => (
+              <span
+                key={label}
+                className="ticket-card__label"
+                style={{ background: LABEL_COLORS[label].bg, color: LABEL_COLORS[label].text }}
+              >
+                {label}
+              </span>
+            ))}
+            {displayLabels.length > 2 && (
+              <span className="ticket-card__label-more" title={displayLabels.slice(2).join(', ')}>
+                +{displayLabels.length - 2}
+              </span>
+            )}
+          </div>
+        )}
         {showDueDate && ticket.dueDate && (
           <div className="ticket-card__detail-slot ticket-card__detail-slot--due">
             <div className="ticket-card__meta">
               <span className={`ticket-card__meta-item ticket-card__meta-item--due ticket-card__meta-item--due-${dueLevel}`}>
                 <CalendarIcon />
-                {ticket.dueDate}
+                <span title={`Due ${formatDueDateWithTime(ticket.dueDate)}`}>
+                  {formatDueDateWithTime(ticket.dueDate)}
+                </span>
                 {dueCountdown && <span className="ticket-card__due-countdown">({dueCountdown})</span>}
               </span>
             </div>
@@ -155,6 +197,11 @@ export function TicketCard({
         {hiddenChildCount != null && hiddenChildCount > 0 && (
           <p className="ticket-card__child-hint">
             {hiddenChildCount} subtask{hiddenChildCount !== 1 ? 's' : ''} — open card to view
+          </p>
+        )}
+        {otherColumnChildCount != null && otherColumnChildCount > 0 && (
+          <p className="ticket-card__child-hint ticket-card__child-hint--other">
+            {otherColumnChildCount} subtask{otherColumnChildCount !== 1 ? 's' : ''} in other columns
           </p>
         )}
         {showAssignee && assignees.length > 0 && (

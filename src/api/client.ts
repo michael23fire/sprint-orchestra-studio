@@ -9,6 +9,18 @@ if (import.meta.env.DEV && /:8081(\/|$)/.test(BASE_URL)) {
 
 const TOKEN_STORAGE_KEY = 'jira_auth_token';
 
+/**
+ * fetch() rejects with an opaque TypeError ("Failed to fetch") when the server is
+ * unreachable (gateway down/restarting) — surface something actionable instead.
+ */
+async function fetchOrConnectError(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch {
+    throw new Error('Cannot reach the server — please check that the backend is running, then try again.');
+  }
+}
+
 let inMemoryToken: string | null = localStorage.getItem(TOKEN_STORAGE_KEY);
 
 export function setAuthToken(token: string) {
@@ -33,6 +45,19 @@ function shouldSendBearer(path: string): boolean {
   return !path.startsWith('/api/auth') && !path.startsWith('/api/users');
 }
 
+/**
+ * A 401 on a request we authenticated means the stored JWT expired/was revoked.
+ * Without this the failure is swallowed by callers' `.catch` and the UI hangs on
+ * "Loading…" forever. Clear the session and let UserContext bounce to /login.
+ */
+function handleUnauthorized(bearerSent: boolean) {
+  if (!bearerSent) return;
+  clearAuthToken();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('auth:session-expired'));
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getStoredAuthToken();
   const mergedHeaders: HeadersInit = {
@@ -50,11 +75,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     (mergedHeaders as Record<string, string>).Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const bearerSent = Boolean((mergedHeaders as Record<string, string>).Authorization);
+  const res = await fetchOrConnectError(`${BASE_URL}${path}`, {
     ...options,
     headers: mergedHeaders,
   });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized(bearerSent);
     const text = await res.text().catch(() => '');
     let message = `API error ${res.status}`;
     if (text) {
@@ -97,11 +124,13 @@ async function raw(path: string, options?: RequestInit): Promise<Response> {
   ) {
     (mergedHeaders as Record<string, string>).Authorization = `Bearer ${token}`;
   }
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const bearerSent = Boolean((mergedHeaders as Record<string, string>).Authorization);
+  const res = await fetchOrConnectError(`${BASE_URL}${path}`, {
     ...options,
     headers: mergedHeaders,
   });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized(bearerSent);
     const text = await res.text().catch(() => '');
     let message = `API error ${res.status}`;
     if (text) {

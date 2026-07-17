@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSpaces } from '../context/SpaceContext';
 import { useCurrentUser } from '../context/UserContext';
 import { isSpaceOwner } from '../types/space';
@@ -17,6 +17,7 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
   const [search, setSearch] = useState('');
   const [allGroups, setAllGroups] = useState<GroupDto[]>([]);
   const [tab, setTab] = useState<'all' | 'people' | 'groups'>('all');
+  const [pendingGroupIds, setPendingGroupIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     if (apiReady) {
@@ -32,6 +33,8 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
 
   const isMember = (userId: string) => space.members.includes(userId);
   const isGroupAdded = (groupId: string) => space.groups.some((g) => g.id === groupId);
+  const groupNamesForUser = (userId: string) =>
+    space.groups.filter((group) => group.memberIds.includes(userId)).map((group) => group.name);
   const isSpaceAdmin = (userId: string) => space.ownerId === userId;
   const canManageMembers = isSpaceOwner(space, currentUser.id);
 
@@ -48,30 +51,45 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
     }
   };
 
-  const toggleGroup = (groupId: string) => {
-    if (!canManageMembers) return;
-    if (isGroupAdded(groupId)) {
-      removeGroup(space.id, groupId);
-    } else {
-      addGroup(space.id, groupId);
+  const toggleGroup = async (groupId: string) => {
+    // Serialize group mutations for this modal. A second add/remove while the
+    // first request is hydrating could otherwise apply stale group data last.
+    if (!canManageMembers || pendingGroupIds.size > 0) return;
+    setPendingGroupIds((prev) => new Set(prev).add(groupId));
+    try {
+      if (isGroupAdded(groupId)) {
+        await removeGroup(space.id, groupId);
+      } else {
+        await addGroup(space.id, groupId);
+      }
+    } finally {
+      setPendingGroupIds((prev) => {
+        const next = new Set(prev);
+        next.delete(groupId);
+        return next;
+      });
     }
   };
 
   const q = search.toLowerCase().trim();
 
-  const filteredUsers = useMemo(() => {
-    if (tab === 'groups') return [];
-    if (!q) return users;
-    return users.filter((u) => u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q));
-  }, [q, tab, users]);
+  const filteredUsers = tab === 'groups'
+    ? []
+    : q
+      ? users.filter((u) => u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
+      : users;
 
-  const filteredGroups = useMemo(() => {
-    if (tab === 'people') return [];
-    if (!q) return allGroups;
-    return allGroups.filter((g) => g.name.toLowerCase().includes(q));
-  }, [search, allGroups, tab]);
+  const filteredGroups = tab === 'people'
+    ? []
+    : q
+      ? allGroups.filter((g) => g.name.toLowerCase().includes(q))
+      : allGroups;
 
-  const memberCount = space.members.length;
+  const effectiveMemberIds = new Set([
+    ...space.members,
+    ...space.groups.flatMap((group) => group.memberIds),
+  ]);
+  const memberCount = effectiveMemberIds.size;
   const groupCount = space.groups.length;
 
   return (
@@ -110,13 +128,16 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
 
             {filteredGroups.map((group) => {
               const active = isGroupAdded(String(group.id));
+              const pending = pendingGroupIds.has(String(group.id));
+              const anotherGroupPending = pendingGroupIds.size > 0 && !pending;
               const RowTag = canManageMembers ? 'button' : 'div';
               return (
                 <RowTag
                   key={`g-${group.id}`}
                   type={canManageMembers ? 'button' : undefined}
+                  disabled={canManageMembers ? pending || anotherGroupPending : undefined}
                   className={`people-list__item ${active ? 'people-list__item--active' : ''} ${!canManageMembers ? 'people-list__item--readonly' : ''}`}
-                  onClick={canManageMembers ? () => toggleGroup(String(group.id)) : undefined}
+                  onClick={canManageMembers ? () => void toggleGroup(String(group.id)) : undefined}
                 >
                   <span className="people-list__group-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -132,7 +153,7 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
                   </span>
                   <span className="people-list__badge">
                     {canManageMembers
-                      ? (active ? 'Remove' : 'Add Group')
+                      ? (pending ? 'Saving…' : active ? 'Remove' : 'Add Group')
                       : (active ? 'Added' : '')}
                   </span>
                 </RowTag>
@@ -144,16 +165,22 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
             )}
 
             {filteredUsers.map((user) => {
-              const active = isMember(user.id);
+              const direct = isMember(user.id);
+              const viaGroups = groupNamesForUser(user.id);
+              const viaGroup = viaGroups.length > 0;
+              const active = direct || viaGroup;
               const owner = isSpaceAdmin(user.id);
-              const ownerLocked = owner && active;
-              const RowTag = canManageMembers ? 'button' : 'div';
+              const ownerLocked = owner && direct;
+              // Group-only access must be managed by removing the group (or the
+              // person from that group), not by pretending this is a direct member.
+              const canToggleDirect = canManageMembers && !ownerLocked && (direct || !viaGroup);
+              const RowTag = canToggleDirect ? 'button' : 'div';
               return (
                 <RowTag
                   key={`u-${user.id}`}
-                  type={canManageMembers ? 'button' : undefined}
-                  className={`people-list__item ${active ? 'people-list__item--active' : ''} ${!canManageMembers ? 'people-list__item--readonly' : ''}`}
-                  onClick={canManageMembers ? () => toggleUser(user.id) : undefined}
+                  type={canToggleDirect ? 'button' : undefined}
+                  className={`people-list__item ${active ? 'people-list__item--active' : ''} ${!canToggleDirect ? 'people-list__item--readonly' : ''}`}
+                  onClick={canToggleDirect ? () => toggleUser(user.id) : undefined}
                 >
                   <span
                     className="people-list__avatar"
@@ -162,12 +189,19 @@ export function AddPeopleModal({ spaceId, onClose }: Props) {
                     {user.name.charAt(0)}
                   </span>
                   <span className="people-list__name">{user.name}</span>
-                  <span className="people-list__badge">
+                  <span
+                    className={`people-list__badge${viaGroup && !ownerLocked ? ' people-list__badge--inherited' : ''}`}
+                    title={viaGroup ? `Access via ${viaGroups.join(', ')}` : undefined}
+                  >
                     {ownerLocked
                       ? 'Owner'
-                      : canManageMembers
-                        ? (active ? 'Remove' : 'Add')
-                        : (active ? 'Member' : '')}
+                      : direct && viaGroup
+                        ? 'Direct + group'
+                        : viaGroup
+                          ? 'Via group'
+                          : canManageMembers
+                            ? (direct ? 'Remove' : 'Add')
+                            : (direct ? 'Member' : '')}
                   </span>
                 </RowTag>
               );

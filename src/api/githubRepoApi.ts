@@ -19,8 +19,9 @@ export interface BulkImportGithubReposRequest {
   /** GitHub user or org login; leading @ optional. */
   account: string;
   /**
-   * Optional PAT for this request only (not stored). Without it, GitHub only returns public repos
-   * for that account (and org private repos need appropriate access on the token).
+   * Optional PAT. Without it, only public owned repos are imported.
+   * With it, private owned repos are included (token must belong to that account)
+   * and the PAT is stored on the space for Scan / Refresh.
    */
   githubToken?: string;
 }
@@ -36,6 +37,9 @@ export interface RepoScanStats {
   owner: string;
   repo: string;
   prsInspected: number;
+  /** Present after backend restart with open/closed split. */
+  openPrs?: number;
+  closedPrs?: number;
   commitsInspected: number;
   linksCreated: number;
   warning: string | null;
@@ -48,6 +52,8 @@ export interface ScanResult {
   /** GitHub returned 404 — removed from space + Development links cleaned up. */
   reposRemoved: number;
   prsInspected: number;
+  openPrs?: number;
+  closedPrs?: number;
   commitsInspected: number;
   linksCreated: number;
   perRepo: RepoScanStats[];

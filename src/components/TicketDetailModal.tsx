@@ -1,13 +1,15 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Ticket, TicketStatus, TicketLabel, TicketPriority, IssueType, Comment } from '../types/ticket';
-import { ALL_LABELS, LABEL_COLORS, ALL_PRIORITIES, PRIORITY_META, ISSUE_TYPE_META } from '../types/ticket';
+import { ALL_LABELS, EPIC_STATUS_OPTIONS, LABEL_COLORS, ALL_PRIORITIES, PRIORITY_META, ISSUE_TYPE_META, labelsForIssueType, normalizeStatusForIssueType } from '../types/ticket';
 import type { Sprint } from '../types/sprint';
 import { USERS } from '../context/UserContext';
+import { useSpaces } from '../context/SpaceContext';
+import { effectiveSpaceMemberIds } from '../types/space';
 import { IssueKeyChip } from './IssueKeyChip';
-import { assigneeSelection, reporterSelection } from '../utils/issueUserFields';
+import { assigneeSelection, reporterSelection, spaceUserPickerOptions } from '../utils/issueUserFields';
 import { sprintsForIssueAssignment } from '../utils/sprintPicker';
-import { formatRelativeAgo } from '../utils/relativeTime';
+import { formatJiraActivityTime, formatAbsoluteActivityTime, formatRelativeAgo } from '../utils/relativeTime';
 import type { StatusLifecycleSegment } from '../utils/statusLifecycle';
 import {
   buildStatusLifecycle,
@@ -18,11 +20,13 @@ import {
   isInstantTerminalDone,
   statusLifecycleSegmentColor,
 } from '../utils/statusLifecycle';
+import { getDescendantKeys, resolveEpicTicket } from '../utils/ticketHierarchy';
+import { formatDueDateWithTime } from '../utils/dueDate';
 
 /** Zoom slider at 100% → this many × more pixels/ms than “fit to panel”. */
 const LIFECYCLE_BAR_ZOOM_MAX_MULT = 14;
-import { attachmentApi, historyApi, worklogApi } from '../api';
-import type { IssueAttachmentDto, IssueHistoryDto, WorkLogDto } from '../api';
+import { attachmentApi, historyApi } from '../api';
+import type { IssueAttachmentDto, IssueHistoryDto } from '../api';
 import {
   createPendingAttachment,
   finalizeEditorHtmlWithUploads,
@@ -83,6 +87,7 @@ function serializeForUpdate(ticket: Ticket): string {
     storyPoints: ticket.storyPoints ?? null,
     priority: ticket.priority ?? null,
     labels: ticket.labels ?? [],
+    flagged: ticket.flagged ?? false,
     sprintId: ticket.sprintId ?? null,
     sprint: ticket.sprint ?? '',
     parentId: ticket.parentId ?? null,
@@ -93,8 +98,9 @@ interface TicketDetailModalProps {
   ticket: Ticket;
   allTickets: Ticket[];
   sprints?: Sprint[];
-  onUpdate: (updated: Ticket) => void;
-  onCreateSubtask: (parentId: string, title: string) => void;
+  /** May resolve false when the save was rejected (server unreachable) so callers can keep unsaved input. */
+  onUpdate: (updated: Ticket) => void | Promise<boolean>;
+  onCreateSubtask: (parentId: string, title: string) => void | Promise<boolean>;
   onDeleteTicket?: (ticketId: string) => void;
   onAddComment?: (issueDbId: number, authorId: number, content: string) => void;
   onEditComment?: (issueDbId: number, commentId: number, content: string) => void;
@@ -351,23 +357,25 @@ export function TicketDetailModal({
   onOpenTicket,
   onClose,
 }: TicketDetailModalProps) {
-  const [draft, setDraft] = useState<Ticket>({ ...ticket });
+  const { currentSpace } = useSpaces();
+  const [draft, setDraft] = useState<Ticket>({
+    ...ticket,
+    status: normalizeStatusForIssueType(ticket.issueType, ticket.status),
+  });
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [commentEditorOpen, setCommentEditorOpen] = useState(false);
   const [commentHtml, setCommentHtml] = useState('');
   const [activityTab, setActivityTab] = useState<ActivityTab>('comments');
   const [historyItems, setHistoryItems] = useState<IssueHistoryDto[]>([]);
-  const [worklogs, setWorklogs] = useState<WorkLogDto[]>([]);
   const [attachments, setAttachments] = useState<Ticket['attachments']>([]);
   const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<number, string>>({});
   const [previewAttachment, setPreviewAttachment] = useState<NonNullable<Ticket['attachments']>[number] | null>(null);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [worklogMinutes, setWorklogMinutes] = useState('');
-  const [worklogNote, setWorklogNote] = useState('');
   const [linkRelation, setLinkRelation] = useState<(typeof LINK_RELATION_OPTIONS)[number]>('is blocked by');
   const [linkTarget, setLinkTarget] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [recentLinkIssueKeys, setRecentLinkIssueKeys] = useState<string[]>(() => {
@@ -400,6 +408,8 @@ export function TicketDetailModal({
   const commentPendingRef = useRef(new Map<string, PendingAttachment>());
   const commentEditPendingRef = useRef(new Map<string, PendingAttachment>());
   const [editorAttachTarget, setEditorAttachTarget] = useState<EditorAttachTarget>(null);
+  /** Which editor's emoji popover is open (null = closed). */
+  const [emojiPickerFor, setEmojiPickerFor] = useState<EditorAttachTarget>(null);
   const [descSaveInProgress, setDescSaveInProgress] = useState(false);
   const [linkDialog, setLinkDialog] = useState<{
     target: EditorAttachTarget;
@@ -412,11 +422,15 @@ export function TicketDetailModal({
   const linkTextInputRef = useRef<HTMLInputElement>(null);
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const aiMenuRef = useRef<HTMLDivElement>(null);
+  /** Jira-style "⋯" actions menu — destructive actions live here, away from the ✕ close. */
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [codeLinkUrl, setCodeLinkUrl] = useState('');
   const [codeLinkSubmitting, setCodeLinkSubmitting] = useState(false);
   const [codeLinkError, setCodeLinkError] = useState<string | null>(null);
   const [codeLinkRefreshing, setCodeLinkRefreshing] = useState(false);
   const [codeLinkRefreshMsg, setCodeLinkRefreshMsg] = useState<string | null>(null);
+  const [statusSaveInProgress, setStatusSaveInProgress] = useState(false);
   const [lifecycleBarTip, setLifecycleBarTip] = useState<{
     seg: StatusLifecycleSegment;
     x: number;
@@ -428,7 +442,10 @@ export function TicketDetailModal({
   const [lifecycleBarViewportW, setLifecycleBarViewportW] = useState(0);
 
   useEffect(() => {
-    setDraft({ ...ticket });
+    setDraft({
+      ...ticket,
+      status: normalizeStatusForIssueType(ticket.issueType, ticket.status),
+    });
     setEditingTitle(false);
     setEditingDesc(false);
     setCommentHtml('');
@@ -440,8 +457,6 @@ export function TicketDetailModal({
     setEditingCommentAttachmentNames([]);
     setEpicPickerOpen(false);
     setActivityTab('comments');
-    setWorklogMinutes('');
-    setWorklogNote('');
     setAttachments(ticket.attachments ?? []);
     setLinkRelation('is blocked by');
     setLinkTarget('');
@@ -456,6 +471,17 @@ export function TicketDetailModal({
     editingCommentEditorRef.current.innerHTML = editingCommentText || '';
   }, [editingCommentId]);
 
+  useEffect(() => {
+    if (!emojiPickerFor) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.ticket-editor__emoji-wrap')) {
+        setEmojiPickerFor(null);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [emojiPickerFor]);
+
   // Keep server-managed collections (code links, issue links, comments)
   // in sync with the latest ticket prop. These are mutated via dedicated APIs and
   // re-fetched by the context, and would otherwise be stuck on the stale draft
@@ -466,11 +492,27 @@ export function TicketDetailModal({
     setDraft((prev) => ({
       ...prev,
       dbId: ticket.dbId ?? prev.dbId,
-      codeLinks: ticket.codeLinks ?? [],
-      linkedIssues: ticket.linkedIssues ?? [],
-      comments: ticket.comments ?? [],
+      // `?? prev.*`: a lean list refresh briefly leaves these undefined on the ticket prop —
+      // don't blank out collections the user is looking at; hydrate will deliver fresh data.
+      codeLinks: ticket.codeLinks ?? prev.codeLinks ?? [],
+      linkedIssues: ticket.linkedIssues ?? prev.linkedIssues ?? [],
+      comments: ticket.comments ?? prev.comments ?? [],
     }));
   }, [ticket.dbId, ticket.codeLinks, ticket.linkedIssues, ticket.comments]);
+
+  // A rejected optimistic type update can be replaced by a server refresh
+  // while this same issue modal is open. Sync hierarchy/type fields when the
+  // canonical ticket changes so the UI cannot remain stuck on a fake Subtask.
+  // This does not interfere with an unsaved picker change: ticket.issueType
+  // itself stays unchanged until an update is submitted.
+  useEffect(() => {
+    setDraft((prev) => ({
+      ...prev,
+      issueType: ticket.issueType,
+      parentId: ticket.parentId,
+      status: normalizeStatusForIssueType(ticket.issueType, ticket.status),
+    }));
+  }, [ticket.issueType, ticket.parentId, ticket.status]);
 
   const statusLifecycleSegments = useMemo(
     () => buildStatusLifecycle(historyItems, ticket.createdAt, draft.status),
@@ -519,6 +561,12 @@ export function TicketDetailModal({
     [historyItems],
   );
 
+  /** Rank (issueOrder) churn is drag-reorder noise — recorded server-side but hidden from the History tab. */
+  const displayedHistoryItems = useMemo(
+    () => historyItems.filter((h) => !(h.eventType === 'field_change' && h.fieldName === 'issueOrder')),
+    [historyItems],
+  );
+
   useEffect(() => {
     if (activityTab !== 'worklog' && activityTab !== 'all') setLifecycleBarTip(null);
   }, [activityTab]);
@@ -529,9 +577,6 @@ export function TicketDetailModal({
     historyApi.getByIssue(ticket.dbId)
       .then((items) => { if (!cancelled) setHistoryItems(items); })
       .catch(() => { if (!cancelled) setHistoryItems([]); });
-    worklogApi.getByIssue(ticket.dbId)
-      .then((items) => { if (!cancelled) setWorklogs(items); })
-      .catch(() => { if (!cancelled) setWorklogs([]); });
     attachmentApi.getByIssue(ticket.dbId)
       .then((items) => { if (!cancelled) setAttachments(items.map(mapAttachmentDto)); })
       .catch(() => { if (!cancelled) setAttachments([]); });
@@ -590,10 +635,12 @@ export function TicketDetailModal({
     const editor = descriptionEditorRef.current;
     if (!editor) return;
     const initial = draft.description ?? '';
-    const hasHtml = /<\/?[a-z][\s\S]*>/i.test(initial);
     const hasLegacyAttachmentToken = /\[attachment:/i.test(initial) || /^\s*attachment:/im.test(initial);
     let html: string;
-    if (hasHtml) {
+    // Treat HTML tags *or* entities (&nbsp;, &amp;, …) as markup. Otherwise
+    // escapeHtml turns `&nbsp;` into `&amp;nbsp;` and the editor shows the
+    // entity as literal text.
+    if (containsHtmlMarkup(initial)) {
       html = hydrateCommentHtml(initial);
     } else if (hasLegacyAttachmentToken) {
       html = expandAttachmentTokensToHtml(initial);
@@ -683,6 +730,18 @@ export function TicketDetailModal({
   }, [aiMenuOpen]);
 
   useEffect(() => {
+    if (!moreMenuOpen) return;
+    function onOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (moreMenuRef.current && !moreMenuRef.current.contains(target)) {
+        setMoreMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onOutside);
+    return () => document.removeEventListener('mousedown', onOutside);
+  }, [moreMenuOpen]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -696,6 +755,24 @@ export function TicketDetailModal({
     if (addingSubtask) subtaskInputRef.current?.focus();
   }, [addingSubtask]);
 
+  const assigneeOptions = useMemo(
+    () =>
+      spaceUserPickerOptions(USERS, effectiveSpaceMemberIds(currentSpace), {
+        id: draft.assigneeId,
+        name: draft.assignee,
+      }),
+    [currentSpace, draft.assigneeId, draft.assignee],
+  );
+
+  const reporterOptions = useMemo(
+    () =>
+      spaceUserPickerOptions(USERS, effectiveSpaceMemberIds(currentSpace), {
+        id: draft.reporterId,
+        name: draft.reporter,
+      }),
+    [currentSpace, draft.reporterId, draft.reporter],
+  );
+
   const sprintAssignmentOptions = useMemo(
     () => (sprints ? sprintsForIssueAssignment(sprints, draft.sprintId) : []),
     [sprints, draft.sprintId],
@@ -705,10 +782,12 @@ export function TicketDetailModal({
     () => allTickets.filter((t) => t.issueType === 'epic' && t.id !== draft.id),
     [allTickets, draft.id],
   );
+  /** Direct epic on story/task, or inherited epic for subtasks (from parent). */
   const selectedEpic = useMemo(
-    () => (draft.parentId ? epicOptions.find((e) => e.id === draft.parentId) ?? null : null),
-    [draft.parentId, epicOptions],
+    () => resolveEpicTicket(draft, allTickets) ?? null,
+    [draft, allTickets],
   );
+  const inheritedEpicOnly = draft.issueType === 'subtask' && selectedEpic != null;
   const hasChanges = useMemo(
     () => serializeForUpdate(draft) !== serializeForUpdate(ticket),
     [draft, ticket],
@@ -820,6 +899,15 @@ export function TicketDetailModal({
     setDraft((prev) => ({ ...prev, [key]: value }));
   }
 
+  async function handleToggleFlag() {
+    const nextFlagged = !draft.flagged;
+    const updated = { ...draft, flagged: nextFlagged };
+    setMoreMenuOpen(false);
+    setDraft(updated);
+    const saved = await Promise.resolve(onUpdate(updated));
+    if (saved === false) setDraft((prev) => ({ ...prev, flagged: !nextFlagged }));
+  }
+
   function applyUploadedAttachments(uploaded: IssueAttachmentDto[]) {
     if (uploaded.length === 0) return;
     setAttachments((prev) => {
@@ -855,7 +943,7 @@ export function TicketDetailModal({
       id: `c-${Date.now()}`,
       author: 'You',
       content: composedContent,
-      createdAt: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      createdAt: new Date().toISOString(),
     };
     patch('comments', [...(draft.comments ?? []), comment]);
     if (onAddComment && currentUserId != null) {
@@ -863,6 +951,7 @@ export function TicketDetailModal({
     }
     setCommentHtml('');
     if (commentEditorRef.current) commentEditorRef.current.innerHTML = '';
+    setCommentEditorOpen(false);
   }
 
   function handleCancelCommentEditor() {
@@ -883,7 +972,7 @@ export function TicketDetailModal({
     setEditingCommentId(comment.id);
     const namesFromText = Array.from(getAttachmentNamesFromText(comment.content));
     const namesFromHtml = Array.from(getAttachmentNamesFromHtml(comment.content));
-    const initialHtml = /<\/?[a-z][\s\S]*>/i.test(comment.content)
+    const initialHtml = containsHtmlMarkup(comment.content)
       ? hydrateCommentHtml(comment.content)
       : expandAttachmentTokensToHtml(comment.content);
     setEditingCommentText(initialHtml);
@@ -915,9 +1004,11 @@ export function TicketDetailModal({
     if (editingCommentEditorRef.current) editingCommentEditorRef.current.innerHTML = '';
   }
 
-  function handleCreateSubtask() {
-    if (!subtaskTitle.trim()) return;
-    onCreateSubtask(draft.id, subtaskTitle.trim());
+  async function handleCreateSubtask() {
+    const title = subtaskTitle.trim();
+    if (!title) return;
+    const ok = await onCreateSubtask(draft.id, title);
+    if (ok === false) return;
     setSubtaskTitle('');
     setAddingSubtask(false);
   }
@@ -930,9 +1021,7 @@ export function TicketDetailModal({
   }
 
   function formatTs(ts: string) {
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return ts;
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return formatAbsoluteActivityTime(ts) || ts;
   }
 
   function openEditorAttachPicker(target: EditorAttachTarget) {
@@ -997,7 +1086,12 @@ export function TicketDetailModal({
       if (newDescription !== prevDescription) {
         const updated: Ticket = { ...draft, description: newDescription };
         setDraft(updated);
-        onUpdate(updated);
+        const saved = await Promise.resolve(onUpdate(updated));
+        if (saved === false) {
+          // The context already alerted; keep the editor open (its DOM is only
+          // re-initialized when editingDesc flips) so the user's text survives a retry.
+          return;
+        }
       } else {
         patch('description', newDescription);
       }
@@ -1016,20 +1110,7 @@ export function TicketDetailModal({
   }
 
   function formatRelativeTime(ts: string) {
-    const d = new Date(ts).getTime();
-    if (Number.isNaN(d)) return ts;
-    const delta = Date.now() - d;
-    const minute = 60_000;
-    const hour = 60 * minute;
-    const day = 24 * hour;
-    if (delta < minute) return 'just now';
-    const minutes = Math.floor(delta / minute);
-    if (delta < hour) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
-    const hours = Math.floor(delta / hour);
-    if (delta < day) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
-    const days = Math.floor(delta / day);
-    if (delta < 7 * day) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
-    return formatTs(ts);
+    return formatJiraActivityTime(ts) || ts;
   }
 
   function fieldLabel(fieldName?: string | null) {
@@ -1041,9 +1122,6 @@ export function TicketDetailModal({
       dueDate: 'Due date',
       issueOrder: 'Rank',
       comment: 'Comment',
-      worklogMinutes: 'Work log minutes',
-      worklogNote: 'Work log note',
-      worklogDate: 'Work log date',
     };
     return fieldName ? (map[fieldName] ?? fieldName) : 'Issue';
   }
@@ -1061,46 +1139,43 @@ export function TicketDetailModal({
     if (h.eventType === 'worklog_created') return `${actor} logged work`;
     if (h.eventType === 'worklog_deleted') return `${actor} deleted a work log`;
     if (h.eventType === 'issue_created') return `${actor} created this issue`;
+    // Action events (code_link_added, attachment_uploaded, …) carry a verb phrase
+    // in description ("linked a repository") and no fieldName/from/to values.
+    if (h.eventType !== 'field_change' && h.description) return `${actor} ${h.description}`;
     return `${actor} updated ${fieldLabel(h.fieldName)}`;
-  }
-
-  function addWorklog() {
-    if (!ticket.dbId || !currentUserId) return;
-    const minutes = Number(worklogMinutes);
-    if (!minutes || minutes <= 0) return;
-    worklogApi.create(ticket.dbId, {
-      authorId: currentUserId,
-      spentMinutes: minutes,
-      note: worklogNote.trim() || undefined,
-      logDate: new Date().toISOString().slice(0, 10),
-    }).then((created) => {
-      setWorklogs((prev) => [created, ...prev]);
-      setWorklogMinutes('');
-      setWorklogNote('');
-    }).catch(() => {});
-  }
-
-  function deleteWorklog(id: number) {
-    if (!ticket.dbId) return;
-    worklogApi.delete(ticket.dbId, id).then(() => {
-      setWorklogs((prev) => prev.filter((w) => w.id !== id));
-    }).catch(() => {});
   }
 
   async function addIssueLink() {
     if (!ticket.dbId || !onAddIssueLink) return;
     const key = linkTarget.trim().toUpperCase();
     if (!key) return;
+    // Silent failures confused users: validate the target exists in this space
+    // before hitting the API, and surface backend rejections inline.
+    const targetExists = allTickets.some((t) => t.id.toUpperCase() === key);
+    if (!targetExists) {
+      setLinkError(`${key} doesn't exist in this space — pick an issue from the list.`);
+      return;
+    }
+    if (key === ticket.id.toUpperCase()) {
+      setLinkError('An issue cannot be linked to itself.');
+      return;
+    }
     // Prevent the exact same (relation, target) link from being added twice.
     // Linking the same target with a *different* relation is allowed.
     const alreadyExists = (draft.linkedIssues ?? []).some(
       (l) => l.linkedIssueKey.toUpperCase() === key && l.relation === linkRelation,
     );
     if (alreadyExists) {
-      window.alert(`This issue is already linked as "${linkRelation}" → ${key}.`);
+      setLinkError(`Already linked as "${linkRelation}" → ${key}.`);
       return;
     }
-    await onAddIssueLink(ticket.dbId, linkRelation, key);
+    setLinkError(null);
+    try {
+      await onAddIssueLink(ticket.dbId, linkRelation, key);
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : 'Failed to link the issue.');
+      return;
+    }
     setRecentLinkIssueKeys((prev) => {
       const next = [key, ...prev.filter((x) => x !== key)].slice(0, 20);
       try {
@@ -1137,6 +1212,15 @@ export function TicketDetailModal({
     const issueDbId = draft.dbId ?? ticket.dbId;
     const url = codeLinkUrl.trim();
     if (!url) return;
+    // Strict: only GitHub repo and PR URLs. Anything else either renders as a
+    // useless metadata-less "LINK" card (other), is never rendered (commit), or
+    // doesn't belong here now that the Code page is PR-only (branch).
+    const isPrUrl = /^https?:\/\/(www\.)?github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+([/?#]|$)/i.test(url);
+    const isRepoUrl = /^https?:\/\/(www\.)?github\.com\/[^/\s]+\/[^/\s]+\/?([?#]|$)/i.test(url);
+    if (!isPrUrl && !isRepoUrl) {
+      setCodeLinkError('Only GitHub repository or pull request URLs are supported — e.g. https://github.com/owner/repo or https://github.com/owner/repo/pull/123.');
+      return;
+    }
     if (!onAddCodeLink) {
       setCodeLinkError('Code linking is not available in this view.');
       return;
@@ -1180,10 +1264,10 @@ export function TicketDetailModal({
       const res = await onRefreshCodeLinks(issueDbId);
       setCodeLinkRefreshMsg(
         res.checked === 0
-          ? 'No linked code to refresh.'
+          ? 'No pull requests linked to this issue yet.'
           : res.updated > 0
-            ? `Refreshed ${res.checked} link${res.checked === 1 ? '' : 's'} — ${res.updated} updated from GitHub.`
-            : `Checked ${res.checked} link${res.checked === 1 ? '' : 's'} — no changes (save a PAT via Code → Repositories bulk import, or set server GITHUB_TOKEN).`,
+            ? `Checked ${res.checked} linked item${res.checked === 1 ? '' : 's'} — ${res.updated} updated from GitHub.`
+            : `Checked ${res.checked} linked item${res.checked === 1 ? '' : 's'} — titles and statuses already match GitHub.`,
       );
     } catch (err) {
       setCodeLinkRefreshMsg(err instanceof Error ? err.message : 'Failed to refresh');
@@ -1397,6 +1481,7 @@ export function TicketDetailModal({
 
   function selectLinkCandidate(candidate: Ticket) {
     setLinkTarget(candidate.id);
+    setLinkError(null);
     setLinkPickerOpen(false);
     setRecentLinkIssueKeys((prev) => {
       const next = [candidate.id, ...prev.filter((x) => x !== candidate.id)].slice(0, 20);
@@ -1523,13 +1608,27 @@ export function TicketDetailModal({
     syncEditorState(target);
   }
 
-  function insertEmoji(target: EditorAttachTarget) {
-    const emojis = ['😀', '👍', '🎉', '❤️', '🔥', '✅', '⚠️', '🚀', '🐛', '💡', '👀', '🙏'];
-    const choice = window.prompt(`Pick an emoji or type your own:\n${emojis.join(' ')}`, emojis[0]);
-    if (!choice) return;
+  const EDITOR_EMOJIS = [
+    '😀', '😄', '😅', '😂', '🙂', '😉', '😍', '🤔',
+    '👍', '👎', '👏', '🙏', '💪', '🤝', '👀', '🫡',
+    '🎉', '🔥', '✅', '❌', '⚠️', '❓', '💡', '🚀',
+    '🐛', '🔧', '📌', '📝', '⏰', '💯', '❤️', '😢',
+  ];
+
+  /** Full "clear formatting": inline styles + links + heading/blockquote back to plain paragraph. */
+  function clearFormatting(target: EditorAttachTarget) {
     focusEditor(target);
-    document.execCommand('insertText', false, choice);
+    document.execCommand('removeFormat');
+    document.execCommand('unlink');
+    document.execCommand('formatBlock', false, 'P');
     syncEditorState(target);
+  }
+
+  function insertEmoji(target: EditorAttachTarget, emoji: string) {
+    focusEditor(target);
+    document.execCommand('insertText', false, emoji);
+    syncEditorState(target);
+    setEmojiPickerFor(null);
   }
 
   function renderEditorToolbar(target: EditorAttachTarget) {
@@ -1550,9 +1649,39 @@ export function TicketDetailModal({
         <button type="button" className="ticket-editor__tool" title="Quote" onClick={() => execEditorCommand(target, 'formatBlock', 'BLOCKQUOTE')}>❝</button>
         <button type="button" className="ticket-editor__tool" title="Insert link" onClick={() => insertLink(target)}>🔗</button>
         <button type="button" className="ticket-editor__tool ticket-editor__tool--attach" title="Add image, video, or file" onClick={() => openEditorAttachPicker(target)}>🖼</button>
-        <button type="button" className="ticket-editor__tool" title="Emoji" onClick={() => insertEmoji(target)}>☺</button>
+        <span className="ticket-editor__emoji-wrap">
+          <button
+            type="button"
+            className={`ticket-editor__tool${emojiPickerFor === target ? ' ticket-editor__tool--active' : ''}`}
+            title="Emoji"
+            aria-expanded={emojiPickerFor === target}
+            onClick={() => setEmojiPickerFor((prev) => (prev === target ? null : target))}
+          >
+            ☺
+          </button>
+          {emojiPickerFor === target && (
+            <div className="ticket-editor__emoji-pop" role="menu" aria-label="Pick an emoji">
+              {EDITOR_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="ticket-editor__emoji-btn"
+                  onClick={() => insertEmoji(target, emoji)}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
         <button type="button" className="ticket-editor__tool" title="Code block" onClick={() => insertCodeBlock(target)}>&lt;/&gt;</button>
-        <button type="button" className="ticket-editor__tool" title="Clear formatting" onClick={() => execEditorCommand(target, 'removeFormat')}>Tx</button>
+        <button type="button" className="ticket-editor__tool" title="Clear formatting" aria-label="Clear formatting" onClick={() => clearFormatting(target)}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+            <path d="M22 21H7" />
+            <path d="m5 11 9 9" />
+          </svg>
+        </button>
         {isCommentComposer ? (
           <button type="button" className="ticket-editor__tool" title="Close editor" aria-label="Close editor" onClick={handleCancelCommentEditor}>✕</button>
         ) : null}
@@ -1573,6 +1702,11 @@ export function TicketDetailModal({
       .replace(/'/g, '&#39;');
   }
 
+  /** True when value has tags or HTML entities (e.g. &nbsp;) that must be parsed as HTML. */
+  function containsHtmlMarkup(value: string): boolean {
+    return /<\/?[a-z][\s\S]*>/i.test(value) || /&(?:[a-z]+|#\d+|#x[\da-f]+);/i.test(value);
+  }
+
   function normalizeCommentHtml(html: string) {
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -1583,7 +1717,17 @@ export function TicketDetailModal({
         el.classList.add('ticket-rich-image');
       }
     });
-    return container.innerHTML.trim();
+    // contenteditable serializes spaces as &nbsp;; store normal spaces so the
+    // description stays human-readable in the editor and API.
+    const walk = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+        node.textContent = node.textContent.replace(/\u00a0/g, ' ');
+      } else {
+        node.childNodes.forEach(walk);
+      }
+    };
+    walk(container);
+    return container.innerHTML.replace(/&nbsp;/gi, ' ').trim();
   }
 
   // Convert legacy `[attachment: filename]` tokens (or `attachment: filename` lines) into
@@ -1639,6 +1783,30 @@ export function TicketDetailModal({
   }
 
   const statusColor = STATUS_COLORS[draft.status];
+  const detailStatusOptions = draft.issueType === 'epic' ? EPIC_STATUS_OPTIONS : STATUS_OPTIONS;
+  const epicDescendants = draft.issueType === 'epic'
+    ? getDescendantKeys(draft.id, allTickets)
+        .map((id) => allTickets.find((t) => t.id === id))
+        .filter((t): t is Ticket => Boolean(t))
+    : [];
+  const completedEpicDescendants = epicDescendants.filter((t) => t.status === 'done').length;
+  const allEpicChildrenDone = epicDescendants.length > 0 && completedEpicDescendants === epicDescendants.length;
+
+  async function handleDetailStatusChange(status: TicketStatus) {
+    if (statusSaveInProgress || status === draft.status) return;
+    const previousStatus = draft.status;
+    const updated: Ticket = { ...draft, status };
+    setDraft(updated);
+    setStatusSaveInProgress(true);
+    try {
+      const saved = await Promise.resolve(onUpdate(updated));
+      if (saved === false) {
+        setDraft((prev) => ({ ...prev, status: previousStatus }));
+      }
+    } finally {
+      setStatusSaveInProgress(false);
+    }
+  }
   const subtasks = allTickets.filter((t) => t.parentId === draft.id);
   const parentTicket = draft.parentId ? allTickets.find((t) => t.id === draft.parentId) : null;
   return (
@@ -1692,6 +1860,24 @@ export function TicketDetailModal({
               )}
             </div>
           )}
+          {inheritedEpicOnly && selectedEpic && (
+            <div className="td-epic-picker">
+              <button
+                type="button"
+                className="td-epic-picker__trigger td-epic-picker__trigger--has-epic td-epic-picker__trigger--inherited"
+                title={`Inherited from parent — Epic ${selectedEpic.id}`}
+                onClick={() => {
+                  handleClose();
+                  onOpenTicket(selectedEpic.id);
+                }}
+              >
+                <span className="td-epic-picker__rail" aria-hidden />
+                <span className="td-epic-picker__epic-ico" aria-hidden>{ISSUE_TYPE_META.epic.icon}</span>
+                <span className="td-epic-picker__epic-word">Epic</span>
+                <IssueKeyChip issueKey={selectedEpic.id} size="sm" variant="onEpic" />
+              </button>
+            </div>
+          )}
           <span className="td-breadcrumb__sep">/</span>
           <span className="td-breadcrumb__item td-breadcrumb__item--current">
             <IssueTypeIcon type={draft.issueType} />
@@ -1707,7 +1893,7 @@ export function TicketDetailModal({
               className="ticket-detail__status-badge"
               style={{ background: statusColor + '22', color: statusColor, borderColor: statusColor + '55' }}
             >
-              {STATUS_OPTIONS.find((s) => s.value === draft.status)?.label}
+              {detailStatusOptions.find((s) => s.value === draft.status)?.label}
             </span>
           </div>
           <div className="ticket-detail__header-actions">
@@ -1749,9 +1935,43 @@ export function TicketDetailModal({
               )}
             </div>
             {onDeleteTicket && (
-              <button type="button" className="ticket-detail__delete" onClick={handleDeleteIssue}>
-                Delete
-              </button>
+              <div className="ticket-detail__more-wrapper" ref={moreMenuRef}>
+                <button
+                  type="button"
+                  className={`ticket-detail__more-trigger${moreMenuOpen ? ' ticket-detail__more-trigger--open' : ''}`}
+                  aria-label="More actions"
+                  title="More actions"
+                  aria-expanded={moreMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setMoreMenuOpen((v) => !v)}
+                >
+                  ⋯
+                </button>
+                {moreMenuOpen && (
+                  <div className="ticket-detail__more-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ticket-detail__more-menu__item"
+                      onClick={handleToggleFlag}
+                    >
+                      <span aria-hidden>{draft.flagged ? '⚐' : '⚑'}</span>
+                      {draft.flagged ? 'Remove flag' : 'Add flag'}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ticket-detail__more-menu__item ticket-detail__more-menu__item--danger"
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        handleDeleteIssue();
+                      }}
+                    >
+                      🗑 Delete issue
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             <button type="button" className="ticket-detail__close" aria-label="Close" onClick={handleClose}>✕</button>
           </div>
@@ -1844,7 +2064,7 @@ export function TicketDetailModal({
                   }}
                 >
                   {draft.description ? (
-                    /<\/?[a-z][\s\S]*>/i.test(draft.description) ? (
+                    containsHtmlMarkup(draft.description) ? (
                       <span dangerouslySetInnerHTML={{ __html: hydrateCommentHtml(draft.description) }} />
                     ) : (/\[attachment:/i.test(draft.description) || /^\s*attachment:/im.test(draft.description)) ? (
                       <span dangerouslySetInnerHTML={{ __html: expandAttachmentTokensToHtml(draft.description) }} />
@@ -1947,16 +2167,24 @@ export function TicketDetailModal({
                     <input
                       ref={subtaskInputRef}
                       className="ticket-detail__subtask-input"
-                      placeholder="Subtask title…"
+                      placeholder="Child issue title…"
                       value={subtaskTitle}
                       onChange={(e) => setSubtaskTitle(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleCreateSubtask();
+                        if (e.key === 'Enter') void handleCreateSubtask();
                         if (e.key === 'Escape') { setAddingSubtask(false); setSubtaskTitle(''); }
                       }}
                     />
                     <div className="ticket-detail__subtask-actions">
-                      <button type="button" className="ticket-detail__btn ticket-detail__btn--primary" onClick={handleCreateSubtask} disabled={!subtaskTitle.trim()}>Create</button>
+                      <button
+                        type="button"
+                        className="ticket-detail__btn ticket-detail__btn--primary"
+                        onClick={() => void handleCreateSubtask()}
+                        disabled={!subtaskTitle.trim()}
+                        title={!subtaskTitle.trim() ? 'Enter a title first' : undefined}
+                      >
+                        Create
+                      </button>
                       <button type="button" className="ticket-detail__btn ticket-detail__btn--ghost" onClick={() => { setAddingSubtask(false); setSubtaskTitle(''); }}>Cancel</button>
                     </div>
                   </div>
@@ -2006,6 +2234,7 @@ export function TicketDetailModal({
                     }}
                     onChange={(e) => {
                       setLinkTarget(e.target.value);
+                      setLinkError(null);
                       setLinkPickerOpen(true);
                     }}
                   />
@@ -2085,6 +2314,7 @@ export function TicketDetailModal({
                 </div>
                 <button type="button" className="ticket-detail__btn ticket-detail__btn--ghost" disabled={!linkTarget.trim()} onClick={addIssueLink}>Link</button>
               </div>
+              {linkError && <p className="ticket-detail__code-error">{linkError}</p>}
               <div className="ticket-detail__linked-list">
                 {(draft.linkedIssues ?? []).length === 0 && (
                   <p className="ticket-detail__no-comments">No linked work items.</p>
@@ -2129,7 +2359,7 @@ export function TicketDetailModal({
                 <button type="button" className={`ticket-detail__activity-tab ${activityTab === 'history' ? 'is-active' : ''}`} onClick={() => setActivityTab('history')}>History</button>
                 <button type="button" className={`ticket-detail__activity-tab ${activityTab === 'worklog' ? 'is-active' : ''}`} onClick={() => setActivityTab('worklog')}>Work log</button>
               </div>
-              {(activityTab === 'comments' || activityTab === 'all') && (
+              {activityTab === 'comments' && (
                 <>
               <div className="ticket-detail__comment-input-wrap">
                 <div className="ticket-detail__avatar ticket-detail__avatar--you">Y</div>
@@ -2169,6 +2399,10 @@ export function TicketDetailModal({
                   <button type="button" className="ticket-detail__btn ticket-detail__btn--ghost" onClick={handleCancelCommentEditor}>Cancel</button>
                 </div>
               )}
+                </>
+              )}
+              {(activityTab === 'comments' || activityTab === 'all') && (
+                <>
               <div className="ticket-detail__comments">
                 {(draft.comments ?? []).length === 0 && (
                   <p className="ticket-detail__no-comments">No comments yet.</p>
@@ -2179,7 +2413,9 @@ export function TicketDetailModal({
                     <div className="ticket-detail__comment-body">
                       <div className="ticket-detail__comment-meta">
                         <span className="ticket-detail__comment-author">{c.author}</span>
-                        <span className="ticket-detail__comment-time">{c.createdAt}</span>
+                        <span className="ticket-detail__comment-time" title={formatTs(c.createdAt)}>
+                          {formatRelativeTime(c.createdAt)}
+                        </span>
                         {currentUserId != null && c.authorId === currentUserId && editingCommentId !== c.id && (
                           <>
                             <button
@@ -2277,8 +2513,8 @@ export function TicketDetailModal({
               )}
               {(activityTab === 'history' || activityTab === 'all') && (
                 <div className="ticket-detail__history">
-                  {historyItems.length === 0 && <p className="ticket-detail__no-comments">No history yet.</p>}
-                  {historyItems.map((h) => (
+                  {displayedHistoryItems.length === 0 && <p className="ticket-detail__no-comments">No history yet.</p>}
+                  {displayedHistoryItems.map((h) => (
                     <div key={h.id} className="ticket-detail__history-row">
                       <div className="ticket-detail__avatar ticket-detail__avatar--history">
                         {actorInitials(h.actorName)}
@@ -2431,7 +2667,7 @@ export function TicketDetailModal({
                         </p>
                       </div>
                     )}
-                    {statusLifecycleSegments.map((seg, idx) => (
+                    {[...statusLifecycleSegments].reverse().map((seg, idx) => (
                       <div key={`${seg.startedAtIso}-${idx}`} className="ticket-detail__lifecycle-seg">
                         <div className="ticket-detail__lifecycle-seg-head">
                           <span className="ticket-detail__lifecycle-seg-status">{seg.statusLabel}</span>
@@ -2478,35 +2714,6 @@ export function TicketDetailModal({
                       </>
                     )}
                   </div>
-                  <div className="ticket-detail__worklog-create">
-                    <input
-                      className="ticket-detail__input"
-                      type="number"
-                      min={1}
-                      placeholder="Minutes"
-                      value={worklogMinutes}
-                      onChange={(e) => setWorklogMinutes(e.target.value)}
-                    />
-                    <input
-                      className="ticket-detail__input"
-                      type="text"
-                      placeholder="Work note (optional)"
-                      value={worklogNote}
-                      onChange={(e) => setWorklogNote(e.target.value)}
-                    />
-                    <button type="button" className="ticket-detail__btn ticket-detail__btn--primary" onClick={addWorklog}>Log time</button>
-                  </div>
-                  {worklogs.length === 0 && <p className="ticket-detail__no-comments">No work logs yet.</p>}
-                  {worklogs.map((w) => (
-                    <div key={w.id} className="ticket-detail__worklog-row">
-                      <div>
-                        <p><strong>{w.authorName}</strong> logged {w.spentMinutes}m</p>
-                        {w.note && <p className="ticket-detail__history-change">{w.note}</p>}
-                        <span>{w.logDate}</span>
-                      </div>
-                      <button type="button" className="ticket-detail__comment-action ticket-detail__comment-action--delete" onClick={() => deleteWorklog(w.id)}>Delete</button>
-                    </div>
-                  ))}
                 </div>
               )}
             </div>
@@ -2533,35 +2740,74 @@ export function TicketDetailModal({
             </DetailRow>
 
             <DetailRow label="Status">
-              <select
-                className="ticket-detail__select"
-                value={draft.status}
-                onChange={(e) => patch('status', e.target.value as TicketStatus)}
-                style={{ color: statusColor, fontWeight: 600 }}
-              >
-                {STATUS_OPTIONS.map(({ value, label }) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+              <div className="ticket-detail__epic-status-wrap">
+                {draft.issueType === 'epic' ? (
+                  <div>
+                    <span
+                      className="ticket-detail__epic-derived-status"
+                      style={{ color: statusColor, borderColor: `${statusColor}55`, background: `${statusColor}12` }}
+                    >
+                      {detailStatusOptions.find((option) => option.value === draft.status)?.label}
+                    </span>
+                    <p className="ticket-detail__field-hint">Automatically derived from child work item stages.</p>
+                  </div>
+                ) : (
+                  <select
+                    className="ticket-detail__select"
+                    value={draft.status}
+                    onChange={(e) => { void handleDetailStatusChange(e.target.value as TicketStatus); }}
+                    disabled={statusSaveInProgress}
+                    aria-busy={statusSaveInProgress}
+                    style={{ color: statusColor, fontWeight: 600 }}
+                  >
+                    {detailStatusOptions.map(({ value, label }) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                )}
+                {draft.issueType === 'epic' && epicDescendants.length > 0 && (
+                  <div className={`ticket-detail__epic-progress${allEpicChildrenDone ? ' is-complete' : ''}`}>
+                    <span>{completedEpicDescendants}/{epicDescendants.length} child work items Done</span>
+                  </div>
+                )}
+              </div>
             </DetailRow>
 
             <DetailRow label="Issue type">
               <div>
+                {draft.issueType === 'epic' ? (
+                  <>
+                    <span
+                      className="ticket-detail__select"
+                      style={{ color: ISSUE_TYPE_META.epic.color, fontWeight: 600, display: 'inline-block' }}
+                    >
+                      {ISSUE_TYPE_META.epic.icon} {ISSUE_TYPE_META.epic.label}
+                    </span>
+                    <p className="ticket-detail__field-hint">
+                      Epics keep their type (same as Jira) — stories and tasks may already be linked to this epic.
+                    </p>
+                  </>
+                ) : draft.issueType === 'subtask' ? (
+                  <>
+                    <span
+                      className="ticket-detail__select"
+                      style={{ color: ISSUE_TYPE_META.subtask.color, fontWeight: 600, display: 'inline-block' }}
+                    >
+                      {ISSUE_TYPE_META.subtask.icon} {ISSUE_TYPE_META.subtask.label}
+                    </span>
+                    <p className="ticket-detail__field-hint">
+                      Subtasks keep their type — once created as a subtask, the issue type cannot be changed.
+                    </p>
+                  </>
+                ) : (
                 <select
                   className="ticket-detail__select"
                   value={draft.issueType ?? 'task'}
                   onChange={(e) => {
                     const next = e.target.value as IssueType;
                     setDraft((prev) => {
-                      let nextDraft: Ticket = { ...prev, issueType: next };
-                      if (next === 'epic') {
-                        nextDraft = { ...nextDraft, parentId: undefined, sprintId: undefined, sprint: '' };
-                      } else if (next === 'subtask' && prev.parentId) {
-                        const p = allTickets.find((t) => t.id === prev.parentId);
-                        if (p?.issueType === 'epic') {
-                          nextDraft = { ...nextDraft, parentId: undefined };
-                        }
-                      }
+                      const nextDraft: Ticket = { ...prev, issueType: next };
+                      nextDraft.labels = labelsForIssueType(next, prev.labels);
                       return nextDraft;
                     });
                   }}
@@ -2570,15 +2816,16 @@ export function TicketDetailModal({
                     fontWeight: 600,
                   }}
                 >
-                  {ISSUE_TYPE_OPTIONS.map((t) => (
+                  {ISSUE_TYPE_OPTIONS.filter((t) => t !== 'epic' && t !== 'subtask').map((t) => (
                     <option key={t} value={t}>
                       {ISSUE_TYPE_META[t].icon} {ISSUE_TYPE_META[t].label}
                     </option>
                   ))}
                 </select>
-                {draft.issueType === 'subtask' && subtasks.length > 0 && (
+                )}
+                {draft.issueType !== 'epic' && draft.issueType !== 'subtask' && (
                   <p className="ticket-detail__field-hint">
-                    This item has subtasks. If it should behave as a parent on the board, set type to <strong>Task</strong> or <strong>Story</strong>.
+                    Subtasks must be created from a parent issue using Create child issue.
                   </p>
                 )}
               </div>
@@ -2591,7 +2838,7 @@ export function TicketDetailModal({
                 onChange={(e) => setDraft((prev) => ({ ...prev, ...assigneeSelection(e.target.value || undefined) }))}
               >
                 <option value="">Unassigned</option>
-                {USERS.map((u) => (
+                {assigneeOptions.map((u) => (
                   <option key={u.id} value={u.name}>{u.name}</option>
                 ))}
               </select>
@@ -2604,13 +2851,13 @@ export function TicketDetailModal({
                 onChange={(e) => setDraft((prev) => ({ ...prev, ...reporterSelection(e.target.value || undefined) }))}
               >
                 <option value="">None</option>
-                {USERS.map((u) => (
+                {reporterOptions.map((u) => (
                   <option key={u.id} value={u.name}>{u.name}</option>
                 ))}
               </select>
             </DetailRow>
 
-            {parentTicket && (
+            {parentTicket && parentTicket.issueType !== 'epic' && (
               <DetailRow label="Parent">
                 <button
                   type="button"
@@ -2631,7 +2878,7 @@ export function TicketDetailModal({
 
             <DetailRow label="Labels">
               <LabelSelect
-                selected={draft.labels ?? []}
+                selected={labelsForIssueType(draft.issueType, draft.labels)}
                 onChange={(v) => patch('labels', v.length ? v : undefined)}
               />
             </DetailRow>
@@ -2693,34 +2940,40 @@ export function TicketDetailModal({
             </DetailRow>
 
             <DetailRow label="Due Date">
-              <input
-                className="ticket-detail__input"
-                type="date"
-                value={toInputDate(draft.dueDate)}
-                onChange={(e) => patch('dueDate', e.target.value || undefined)}
-              />
+              <div className="ticket-detail__date-field">
+                <input
+                  className="ticket-detail__input"
+                  type="date"
+                  value={toInputDate(draft.dueDate)}
+                  onChange={(e) => patch('dueDate', e.target.value || undefined)}
+                />
+                {draft.dueDate && (
+                  <p className="ticket-detail__field-hint ticket-detail__due-preview">
+                    Due {formatDueDateWithTime(draft.dueDate)}
+                  </p>
+                )}
+              </div>
             </DetailRow>
 
             <div className="ticket-detail__dev-aside">
               <h3 className="ticket-detail__dev-aside-title ticket-detail__section-title ticket-detail__section-title--with-action">
                 <span>
-                  Development <span className="ticket-detail__attachment-count">{(draft.codeLinks ?? []).length}</span>
+                  Development <span className="ticket-detail__attachment-count">{(draft.codeLinks ?? []).filter((c) => c.kind !== 'commit').length}</span>
                 </span>
-                {onRefreshCodeLinks && (draft.codeLinks ?? []).length > 0 && (
+                {onRefreshCodeLinks && (draft.codeLinks ?? []).some((c) => c.kind !== 'commit') && (
                   <button
                     type="button"
                     className="ticket-detail__code-refresh"
                     onClick={refreshCodeLinks}
                     disabled={codeLinkRefreshing}
-                    title="Fetch the latest PR / commit state from GitHub"
+                    title="Fetch the latest PR state from GitHub"
                   >
                     {codeLinkRefreshing ? 'Refreshing…' : '↻ Refresh'}
                   </button>
                 )}
               </h3>
               <p className="ticket-detail__dev-aside-hint">
-                GitHub PRs, branches, and commits for this issue. Titles and PR status come from the GitHub API.
-                For <strong>private</strong> repos, save a PAT on this space via <strong>Code → Repositories → Import all repos</strong> (stored server-side, not shown in the UI) or set server <code>GITHUB_TOKEN</code>.
+                Paste a GitHub repo or pull request URL.
               </p>
               {codeLinkRefreshMsg && <p className="ticket-detail__code-note">{codeLinkRefreshMsg}</p>}
               {onAddCodeLink && (
@@ -2728,7 +2981,7 @@ export function TicketDetailModal({
                   <input
                     className="ticket-detail__input ticket-detail__code-input"
                     type="url"
-                    placeholder="Paste GitHub URL…"
+                    placeholder="Paste GitHub PR or repo URL…"
                     value={codeLinkUrl}
                     onChange={(e) => setCodeLinkUrl(e.target.value)}
                     onKeyDown={(e) => {
@@ -2750,15 +3003,15 @@ export function TicketDetailModal({
               )}
               {codeLinkError && <p className="ticket-detail__code-error">{codeLinkError}</p>}
               <div className="ticket-detail__code-list">
-                {(draft.codeLinks ?? []).length === 0 && (
+                {(draft.codeLinks ?? []).filter((c) => c.kind !== 'commit').length === 0 && (
                   <p className="ticket-detail__dev-empty">
-                    No code linked yet. Paste a GitHub URL to connect a PR, commit, or branch.
+                    No code linked yet. Paste a GitHub pull request or repository URL.
                   </p>
                 )}
-                {(draft.codeLinks ?? []).map((c) => {
-                  const canDelete =
-                    Boolean(onDeleteCodeLink) &&
-                    (c.kind === 'branch' || c.kind === 'repo' || c.kind === 'other');
+                {(draft.codeLinks ?? [])
+                  .filter((c) => c.kind !== 'commit')
+                  .map((c) => {
+                  const canDelete = Boolean(onDeleteCodeLink);
                   return (
                     <CodeLinkRow
                       key={c.id}

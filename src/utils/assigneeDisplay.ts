@@ -12,11 +12,57 @@ export function primaryAssigneeName(t: Ticket): string | undefined {
   return undefined;
 }
 
-export function ticketMatchesAssigneeFilter(t: Ticket, filter: string | null): boolean {
-  if (filter === null) return true;
+/**
+ * Empty selection = show everyone (Jira “All assignees”).
+ * Non-empty = OR match: ticket matches if its assignee is any selected name,
+ * or if Unassigned is selected and the ticket has no assignee.
+ */
+export function ticketMatchesAssigneeFilter(t: Ticket, filters: readonly string[]): boolean {
+  if (filters.length === 0) return true;
   const p = primaryAssigneeName(t);
-  if (filter === BOARD_ASSIGNEE_FILTER_UNASSIGNED) return !p;
-  return p === filter;
+  const wantUnassigned = filters.includes(BOARD_ASSIGNEE_FILTER_UNASSIGNED);
+  if (!p) return wantUnassigned;
+  return filters.includes(p);
+}
+
+/** Toggle a chip in the multi-select assignee filter (Jira-style stack / OR). */
+export function toggleAssigneeFilter(current: readonly string[], value: string): string[] {
+  if (current.includes(value)) return current.filter((x) => x !== value);
+  return [...current, value];
+}
+
+/**
+ * Assignee chips / filter options for Board & Backlog.
+ * When `spaceMemberIds` is set, only assignees who belong to that space are listed.
+ */
+export function collectToolbarAssigneeNames(
+  tickets: Ticket[],
+  opts?: {
+    excludeEpics?: boolean;
+    spaceMemberIds?: Iterable<string>;
+  },
+): { sortedNames: string[]; anyUnassigned: boolean } {
+  const memberIds = opts?.spaceMemberIds
+    ? new Set(Array.from(opts.spaceMemberIds, String))
+    : null;
+  const names = new Set<string>();
+  let anyUnassigned = false;
+  for (const t of tickets) {
+    if (opts?.excludeEpics && t.issueType === 'epic') continue;
+    const p = primaryAssigneeName(t);
+    if (!p) {
+      anyUnassigned = true;
+      continue;
+    }
+    if (memberIds) {
+      if (t.assigneeId == null || !memberIds.has(String(t.assigneeId))) continue;
+    }
+    names.add(p);
+  }
+  return {
+    sortedNames: Array.from(names).sort((a, b) => a.localeCompare(b)),
+    anyUnassigned,
+  };
 }
 
 export function initialsForPerson(name: string): string {
@@ -37,25 +83,25 @@ export function resolveAssigneeAvatarBackground(name: string, users: AppUser[]):
 export function partitionAssigneesForToolbar(
   sortedNames: string[],
   maxInline: number,
-  activeFilter: string | null,
+  activeFilters: readonly string[],
 ): { inline: string[]; overflow: string[] } {
   if (sortedNames.length <= maxInline) {
     return { inline: [...sortedNames], overflow: [] };
   }
-  if (
-    activeFilter
-    && activeFilter !== BOARD_ASSIGNEE_FILTER_UNASSIGNED
-    && sortedNames.includes(activeFilter)
-    && sortedNames.slice(0, maxInline).every((n) => n !== activeFilter)
-  ) {
-    const withoutActive = sortedNames.filter((n) => n !== activeFilter);
-    const inline = [activeFilter, ...withoutActive.slice(0, maxInline - 1)];
-    const inlineSet = new Set(inline);
-    const overflow = sortedNames.filter((n) => !inlineSet.has(n));
-    return { inline, overflow };
+  const naturalInline = sortedNames.slice(0, maxInline);
+  const selected = activeFilters.filter(
+    (f) => f !== BOARD_ASSIGNEE_FILTER_UNASSIGNED && sortedNames.includes(f),
+  );
+  const needPin = selected.filter((n) => !naturalInline.includes(n));
+  if (needPin.length === 0) {
+    return {
+      inline: naturalInline,
+      overflow: sortedNames.slice(maxInline),
+    };
   }
-  return {
-    inline: sortedNames.slice(0, maxInline),
-    overflow: sortedNames.slice(maxInline),
-  };
+  const withoutPinned = sortedNames.filter((n) => !needPin.includes(n));
+  const inline = [...needPin, ...withoutPinned].slice(0, maxInline);
+  const inlineSet = new Set(inline);
+  const overflow = sortedNames.filter((n) => !inlineSet.has(n));
+  return { inline, overflow };
 }

@@ -3,8 +3,10 @@ import { AssigneeAvatar } from './AssigneeAvatar';
 import {
   BOARD_ASSIGNEE_FILTER_UNASSIGNED,
   partitionAssigneesForToolbar,
+  toggleAssigneeFilter,
 } from '../utils/assigneeDisplay';
-
+import './BoardAssigneeFilter.css';
+import './AssigneeAvatar.css';
 const MAX_INLINE_ASSIGNEES = 6;
 
 function IconAssigneeAll() {
@@ -18,20 +20,23 @@ function IconAssigneeAll() {
 
 interface BoardAssigneeFilterProps {
   sortedNames: string[];
-  anyUnassigned: boolean;
-  assigneeFilter: string | null;
-  onAssigneeFilterChange: (next: string | null) => void;
+  /** @deprecated Always shows Unassigned; kept for call-site compatibility. */
+  anyUnassigned?: boolean;
+  /** Empty = all assignees. Non-empty = multi-select OR filter. */
+  assigneeFilter: string[];
+  onAssigneeFilterChange: (next: string[]) => void;
 }
 
 export function BoardAssigneeFilter({
   sortedNames,
-  anyUnassigned,
   assigneeFilter,
   onAssigneeFilterChange,
 }: BoardAssigneeFilterProps) {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
+  const noneSelected = assigneeFilter.length === 0;
+  const unassignedActive = assigneeFilter.includes(BOARD_ASSIGNEE_FILTER_UNASSIGNED);
 
   const { inline, overflow } = useMemo(
     () => partitionAssigneesForToolbar(sortedNames, MAX_INLINE_ASSIGNEES, assigneeFilter),
@@ -60,9 +65,9 @@ export function BoardAssigneeFilter({
   }, [overflowOpen]);
 
   const pickAssignee = useCallback(
-    (name: string) => {
-      onAssigneeFilterChange(assigneeFilter === name ? null : name);
-      setOverflowOpen(false);
+    (name: string, { keepPickerOpen = false }: { keepPickerOpen?: boolean } = {}) => {
+      onAssigneeFilterChange(toggleAssigneeFilter(assigneeFilter, name));
+      if (!keepPickerOpen) setOverflowOpen(false);
     },
     [assigneeFilter, onAssigneeFilterChange],
   );
@@ -74,12 +79,12 @@ export function BoardAssigneeFilter({
       <span className="hover-tip-host">
         <button
           type="button"
-          className={`board-toolbar__assignee-chip board-toolbar__assignee-chip--all ${assigneeFilter === null ? 'is-active' : ''}`}
+          className={`board-toolbar__assignee-chip board-toolbar__assignee-chip--all ${noneSelected ? 'is-active' : ''}`}
           title="All assignees"
           aria-label="All assignees"
-          aria-pressed={assigneeFilter === null}
+          aria-pressed={noneSelected}
           onClick={() => {
-            onAssigneeFilterChange(null);
+            onAssigneeFilterChange([]);
             setOverflowOpen(false);
           }}
         >
@@ -89,30 +94,26 @@ export function BoardAssigneeFilter({
           All assignees
         </span>
       </span>
-      {anyUnassigned && (
-        <span className="hover-tip-host">
-          <button
-            type="button"
-            className={`board-toolbar__assignee-chip ${assigneeFilter === BOARD_ASSIGNEE_FILTER_UNASSIGNED ? 'is-active' : ''}`}
-            title="Unassigned"
-            aria-label="Unassigned"
-            aria-pressed={assigneeFilter === BOARD_ASSIGNEE_FILTER_UNASSIGNED}
-            onClick={() => {
-              onAssigneeFilterChange(
-                assigneeFilter === BOARD_ASSIGNEE_FILTER_UNASSIGNED ? null : BOARD_ASSIGNEE_FILTER_UNASSIGNED,
-              );
-              setOverflowOpen(false);
-            }}
-          >
-            <span className="board-toolbar__assignee-chip-inner board-toolbar__assignee-chip-inner--muted">?</span>
-          </button>
-          <span className="hover-tip__popup" role="tooltip">
-            Unassigned
-          </span>
+      <span className="hover-tip-host">
+        <button
+          type="button"
+          className={`board-toolbar__assignee-chip ${unassignedActive ? 'is-active' : ''}`}
+          title="Unassigned"
+          aria-label="Unassigned"
+          aria-pressed={unassignedActive}
+          onClick={() => {
+            onAssigneeFilterChange(toggleAssigneeFilter(assigneeFilter, BOARD_ASSIGNEE_FILTER_UNASSIGNED));
+            setOverflowOpen(false);
+          }}
+        >
+          <span className="board-toolbar__assignee-chip-inner board-toolbar__assignee-chip-inner--muted">?</span>
+        </button>
+        <span className="hover-tip__popup" role="tooltip">
+          Unassigned
         </span>
-      )}
+      </span>
       {inline.map((name) => {
-        const active = assigneeFilter === name;
+        const active = assigneeFilter.includes(name);
         return (
           <AssigneeAvatar
             key={name}
@@ -139,7 +140,7 @@ export function BoardAssigneeFilter({
             +{overflowCount}
           </button>
           {overflowOpen && (
-            <div className="board-toolbar__assignee-picker" role="listbox" aria-label="More assignees">
+            <div className="board-toolbar__assignee-picker" role="listbox" aria-label="More assignees" aria-multiselectable="true">
               <input
                 type="search"
                 className="board-toolbar__assignee-picker-search"
@@ -153,19 +154,22 @@ export function BoardAssigneeFilter({
                 {pickerNames.length === 0 && (
                   <p className="board-toolbar__assignee-picker-empty">No matches.</p>
                 )}
-                {pickerNames.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    role="option"
-                    aria-selected={assigneeFilter === name}
-                    className={`board-toolbar__assignee-picker-row ${assigneeFilter === name ? 'is-selected' : ''}`}
-                    onClick={() => pickAssignee(name)}
-                  >
-                    <AssigneeAvatar name={name} size="toolbar" as="div" showHoverTooltip={false} />
-                    <span className="board-toolbar__assignee-picker-name">{name}</span>
-                  </button>
-                ))}
+                {pickerNames.map((name) => {
+                  const active = assigneeFilter.includes(name);
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      className={`board-toolbar__assignee-picker-row ${active ? 'is-selected' : ''}`}
+                      onClick={() => pickAssignee(name, { keepPickerOpen: true })}
+                    >
+                      <AssigneeAvatar name={name} size="toolbar" as="div" showHoverTooltip={false} />
+                      <span className="board-toolbar__assignee-picker-name">{name}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

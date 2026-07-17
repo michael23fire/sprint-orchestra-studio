@@ -19,6 +19,14 @@ export function isSpaceOwner(space: Pick<Space, 'ownerId'>, userId: string): boo
   return space.ownerId != null && space.ownerId === userId;
 }
 
+/** Direct members plus members inherited from linked groups, de-duplicated. */
+export function effectiveSpaceMemberIds(space: Pick<Space, 'members' | 'groups'>): string[] {
+  return Array.from(new Set([
+    ...space.members.map(String),
+    ...space.groups.flatMap((group) => group.memberIds.map(String)),
+  ]));
+}
+
 export const SPACE_COLORS = [
   '#6366f1',
   '#3b82f6',

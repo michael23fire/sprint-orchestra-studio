@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useTickets } from '../context/TicketContext';
-import type { TicketPriority, TicketStatus } from '../types/ticket';
+import { useSpaces } from '../context/SpaceContext';
+import { effectiveSpaceMemberIds } from '../types/space';
+import { useCurrentUser } from '../context/UserContext';
+import type { IssueType, TicketPriority, TicketStatus } from '../types/ticket';
+import { ISSUE_TYPE_META } from '../types/ticket';
 import './Summary.css';
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
@@ -18,6 +22,8 @@ const STATUS_COLORS: Record<TicketStatus, string> = {
   in_review: '#f59e0b',
   done: '#10b981',
 };
+
+const EPIC_PROGRESS_STATUSES: TicketStatus[] = ['planned', 'in_progress', 'done'];
 
 const PRIORITY_ORDER: TicketPriority[] = ['highest', 'high', 'medium', 'low', 'lowest'];
 const PRIORITY_COLORS: Record<TicketPriority, string> = {
@@ -38,6 +44,26 @@ const PRIORITY_LABELS: Record<TicketPriority, string> = {
 function percent(done: number, total: number): number {
   if (total <= 0) return 0;
   return Math.round((done / total) * 100);
+}
+
+/** Start of local day, then subtract `days` (inclusive window for “last N days”). */
+function daysAgoStart(days: number): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - days);
+  return d;
+}
+
+function parseInstant(iso: string | undefined): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function isWithinLastDays(iso: string | undefined, days: number): boolean {
+  const d = parseInstant(iso);
+  if (!d) return false;
+  return d >= daysAgoStart(days);
 }
 
 /** SVG donut slice: angles in degrees, 0° = top, clockwise (matches CSS conic-gradient). */
@@ -73,23 +99,11 @@ function donutSegmentPath(
 const DONUT = { vb: 100, cx: 50, cy: 50, rOut: 40, rIn: 26 } as const;
 
 export function Summary() {
-  const { tickets, sprints } = useTickets();
+  const { tickets } = useTickets();
+  const { currentSpace } = useSpaces();
+  const { users } = useCurrentUser();
   const [statusHover, setStatusHover] = useState<TicketStatus | null>(null);
 
-  const activeSprint = useMemo(
-    () => sprints.find((s) => s.status === 'active') ?? null,
-    [sprints],
-  );
-  const activeSprintTickets = useMemo(
-    () => (activeSprint ? tickets.filter((t) => t.sprintId === activeSprint.id) : []),
-    [tickets, activeSprint],
-  );
-
-  const doneInActive = useMemo(
-    () => activeSprintTickets.filter((t) => t.status === 'done').length,
-    [activeSprintTickets],
-  );
-  const blockedCount = useMemo(() => tickets.filter((t) => t.status === 'blocked').length, [tickets]);
   const unassignedCount = useMemo(() => tickets.filter((t) => !t.assignee).length, [tickets]);
   const byStatus = useMemo(() => {
     const base: Record<TicketStatus, number> = {
@@ -103,17 +117,37 @@ export function Summary() {
     return base;
   }, [tickets]);
 
+  const spaceMemberIds = useMemo(
+    () => new Set(effectiveSpaceMemberIds(currentSpace)),
+    [currentSpace],
+  );
+
+  const spaceMemberById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of users) {
+      if (spaceMemberIds.has(String(u.id))) m.set(String(u.id), u.name);
+    }
+    return m;
+  }, [users, spaceMemberIds]);
+
   const topAssignees = useMemo(() => {
-    const m = new Map<string, number>();
-    tickets.forEach((t) => {
-      if (!t.assignee) return;
-      m.set(t.assignee, (m.get(t.assignee) ?? 0) + 1);
-    });
+    const m = new Map<string, { name: string; count: number }>();
+    for (const [id, name] of spaceMemberById) {
+      m.set(id, { name, count: 0 });
+    }
+    for (const t of tickets) {
+      if (t.assigneeId == null) continue;
+      const id = String(t.assigneeId);
+      if (!spaceMemberIds.has(id)) continue;
+      const name = spaceMemberById.get(id) ?? t.assignee ?? id;
+      const prev = m.get(id);
+      m.set(id, { name, count: (prev?.count ?? 0) + 1 });
+    }
     return Array.from(m.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-  }, [tickets]);
+      .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 8);
+  }, [tickets, spaceMemberIds, spaceMemberById]);
 
   const issueTypes = useMemo(() => {
     const map = new Map<string, number>();
@@ -122,8 +156,13 @@ export function Summary() {
       map.set(key, (map.get(key) ?? 0) + 1);
     });
     return Array.from(map.entries())
-      .map(([type, count]) => ({ type, count, pct: percent(count, tickets.length) }))
-      .sort((a, b) => b.count - a.count);
+      .map(([type, count]) => ({
+        type: type as IssueType,
+        count,
+        pct: percent(count, tickets.length),
+        meta: ISSUE_TYPE_META[type as IssueType] ?? ISSUE_TYPE_META.task,
+      }))
+      .sort((a, b) => b.count - a.count || a.meta.label.localeCompare(b.meta.label));
   }, [tickets]);
 
   const priorityCounts = useMemo(() => {
@@ -144,20 +183,45 @@ export function Summary() {
     const epics = tickets.filter((t) => t.issueType === 'epic');
     return epics.map((epic) => {
       const items = tickets.filter((t) => t.parentId === epic.id);
-      const done = items.filter((i) => i.status === 'done').length;
-      const inProgress = items.filter((i) => i.status === 'in_progress' || i.status === 'in_review').length;
-      const todo = items.length - done - inProgress;
-      const total = Math.max(items.length, 1);
+      const total = items.length;
+      const counts: Record<TicketStatus, number> = {
+        planned: items.filter((item) => item.status === 'planned').length,
+        in_progress: items.filter((item) => (
+          item.status === 'in_progress' || item.status === 'blocked' || item.status === 'in_review'
+        )).length,
+        blocked: 0,
+        in_review: 0,
+        done: items.filter((item) => item.status === 'done').length,
+      };
+      const activeStatuses = EPIC_PROGRESS_STATUSES.filter((status) => counts[status] > 0);
+      // Largest-remainder so the bar sums to 100% without inventing empty stages.
+      const floors = activeStatuses.map((status) => {
+        const exact = total === 0 ? 0 : (counts[status] / total) * 100;
+        return { status, floor: Math.floor(exact), frac: exact - Math.floor(exact) };
+      });
+      let remain = total === 0 ? 0 : 100 - floors.reduce((sum, s) => sum + s.floor, 0);
+      floors
+        .slice()
+        .sort((a, b) => b.frac - a.frac)
+        .forEach((s) => {
+          if (remain <= 0) return;
+          s.floor += 1;
+          remain -= 1;
+        });
+      const pctByStatus = Object.fromEntries(floors.map((s) => [s.status, s.floor])) as Partial<
+        Record<TicketStatus, number>
+      >;
+      const segments = activeStatuses.map((status) => ({
+        status,
+        count: counts[status],
+        pct: pctByStatus[status] ?? 0,
+      }));
       return {
         id: epic.id,
         title: epic.title,
-        doneCount: done,
-        inProgressCount: inProgress,
-        todoCount: todo,
-        totalCount: items.length,
-        donePct: Math.round((done / total) * 100),
-        progressPct: Math.round((inProgress / total) * 100),
-        todoPct: Math.max(0, 100 - Math.round((done / total) * 100) - Math.round((inProgress / total) * 100)),
+        totalCount: total,
+        donePct: total === 0 ? 0 : Math.round((counts.done / total) * 100),
+        segments,
       };
     });
   }, [tickets]);
@@ -165,7 +229,8 @@ export function Summary() {
   const dueSoonCount = useMemo(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
-    const next7 = new Date(now.getTime() + 7 * 86400000);
+    const next7 = new Date(now);
+    next7.setDate(now.getDate() + 7);
     return tickets.filter((t) => {
       if (!t.dueDate || t.status === 'done') return false;
       const d = new Date(t.dueDate);
@@ -175,12 +240,23 @@ export function Summary() {
     }).length;
   }, [tickets]);
 
-  const completedLast7 = useMemo(() => tickets.filter((t) => t.status === 'done').length, [tickets]);
-  const createdLast7 = useMemo(() => Math.min(tickets.length, 1), [tickets.length]);
-  const updatedLast7 = useMemo(() => tickets.length, [tickets.length]);
+  // Approx: done issues whose row was last touched in the window (no bulk “completed at” field yet).
+  const completedLast7 = useMemo(
+    () =>
+      tickets.filter(
+        (t) => t.status === 'done' && isWithinLastDays(t.updatedAt ?? t.createdAt, 7),
+      ).length,
+    [tickets],
+  );
+  const createdLast7 = useMemo(
+    () => tickets.filter((t) => isWithinLastDays(t.createdAt, 7)).length,
+    [tickets],
+  );
+  const updatedLast7 = useMemo(
+    () => tickets.filter((t) => isWithinLastDays(t.updatedAt ?? t.createdAt, 7)).length,
+    [tickets],
+  );
 
-  const sprintProgress = percent(doneInActive, activeSprintTickets.length);
-  const overallDone = tickets.filter((t) => t.status === 'done').length;
   const { statusLegend, statusSegments } = useMemo(() => {
     const legend = (Object.keys(byStatus) as TicketStatus[]).filter((k) => byStatus[k] > 0);
     const totalWork = Math.max(tickets.length, 1);
@@ -355,7 +431,11 @@ export function Summary() {
       <section className="summary-grid">
         <article className="summary-card">
           <h3>Types of work</h3>
-          <p className="summary-card__hint">Each row shows count and share. Hover the row for “count / total”.</p>
+          <p className="summary-card__hint">Get a breakdown of work items by their types.</p>
+          <div className="summary-worktypes__header" aria-hidden>
+            <span>Type</span>
+            <span>Distribution</span>
+          </div>
           <div className="summary-worktypes">
             {issueTypes.map((it) => {
               const ratioTip = tickets.length > 0 ? `${it.count} / ${tickets.length}` : '0 / 0';
@@ -363,19 +443,31 @@ export function Summary() {
                 <div
                   key={it.type}
                   className="summary-worktypes__row"
-                  aria-label={`${it.type}, ${ratioTip}, ${it.pct}%`}
+                  aria-label={`${it.meta.label}, ${ratioTip}, ${it.pct}%`}
                 >
                   <div className="summary-hover-tooltip">
-                    {it.type}: {ratioTip} ({it.pct}%)
+                    {it.meta.label}: {ratioTip} ({it.pct}%)
                   </div>
-                  <span className="summary-worktypes__name">{it.type}</span>
+                  <span className="summary-worktypes__name">
+                    <span
+                      className="summary-worktypes__icon"
+                      style={{ background: it.meta.color }}
+                      aria-hidden
+                    >
+                      {it.meta.icon}
+                    </span>
+                    {it.meta.label}
+                  </span>
                   <div className="summary-worktypes__bar-wrap">
-                    <div className="summary-worktypes__bar" style={{ width: `${it.pct}%` }} />
-                  </div>
-                  <div className="summary-worktypes__counts">
-                    <span className="summary-worktypes__n">{it.count}</span>
-                    <span className="summary-worktypes__sep">·</span>
-                    <span className="summary-worktypes__pct">{it.pct}%</span>
+                    <div
+                      className="summary-worktypes__bar"
+                      style={{ width: `${it.pct}%`, background: it.meta.color }}
+                    >
+                      {it.pct >= 10 && <span>{it.pct}%</span>}
+                    </div>
+                    {it.pct > 0 && it.pct < 10 && (
+                      <span className="summary-worktypes__small-value">{it.pct}%</span>
+                    )}
                   </div>
                 </div>
               );
@@ -393,7 +485,7 @@ export function Summary() {
                 const pct = percent(a.count, tickets.length);
                 const ratioTip = tickets.length > 0 ? `${a.count} / ${tickets.length}` : '0 / 0';
                 return (
-                  <div key={a.name} className="summary-workload__row" aria-label={`${a.name}, ${ratioTip}, ${pct}%`}>
+                  <div key={a.id} className="summary-workload__row" aria-label={`${a.name}, ${ratioTip}, ${pct}%`}>
                     <div className="summary-hover-tooltip">
                       {a.name}: {ratioTip} ({pct}%)
                     </div>
@@ -433,9 +525,11 @@ export function Summary() {
           <h3>Epic progress</h3>
           <p className="summary-card__hint">See how your epics are progressing at a glance.</p>
           <div className="summary-epics__legend">
-            <span><i style={{ background: '#65a30d' }} /> Done</span>
-            <span><i style={{ background: '#3b82f6' }} /> In progress</span>
-            <span><i style={{ background: '#9ca3af' }} /> To do</span>
+            {EPIC_PROGRESS_STATUSES.map((status) => (
+              <span key={status}>
+                <i style={{ background: STATUS_COLORS[status] }} /> {STATUS_LABELS[status]}
+              </span>
+            ))}
           </div>
           {epicProgress.length === 0 ? (
             <p className="summary-empty">No epics yet.</p>
@@ -445,18 +539,24 @@ export function Summary() {
                 <div key={e.id} className="summary-epics__row">
                   <div className="summary-epics__head">
                     <span>{e.id} {e.title}</span>
-                    <span>{e.donePct}% done</span>
+                    <span>{e.totalCount === 0 ? 'No child issues' : `${e.donePct}% done`}</span>
                   </div>
                   <div className="summary-epics__stack">
                     <div className="summary-epics__stack-track">
-                      <span title={`Done: ${e.doneCount}`} style={{ width: `${e.donePct}%`, background: '#65a30d' }} />
-                      <span title={`In progress: ${e.inProgressCount}`} style={{ width: `${e.progressPct}%`, background: '#3b82f6' }} />
-                      <span title={`To do: ${e.todoCount}`} style={{ width: `${e.todoPct}%`, background: '#9ca3af' }} />
+                      {e.segments.map((seg) => (
+                        <span
+                          key={seg.status}
+                          title={`${STATUS_LABELS[seg.status]}: ${seg.count}`}
+                          style={{ width: `${seg.pct}%`, background: STATUS_COLORS[seg.status] }}
+                        />
+                      ))}
                     </div>
                     <div className="summary-epics__tooltip">
-                      <p>Done: {e.doneCount}</p>
-                      <p>In progress: {e.inProgressCount}</p>
-                      <p>To do: {e.todoCount}</p>
+                      {e.segments.map((seg) => (
+                        <p key={seg.status}>
+                          {STATUS_LABELS[seg.status]}: {seg.count}
+                        </p>
+                      ))}
                       <p>Total: {e.totalCount}</p>
                     </div>
                   </div>
@@ -467,12 +567,6 @@ export function Summary() {
         </article>
       </section>
 
-      <section className="summary-footer-kpis">
-        <span>Active sprint progress: {sprintProgress}% ({doneInActive}/{activeSprintTickets.length})</span>
-        <span>Blocked: {blockedCount}</span>
-        <span>Sprints: {sprints.length}</span>
-        <span>Total done: {overallDone}</span>
-      </section>
     </div>
   );
 }

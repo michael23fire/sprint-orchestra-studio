@@ -1,8 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { Ticket, TicketStatus, IssueType } from '../types/ticket';
-import { ISSUE_TYPE_META } from '../types/ticket';
+import { EPIC_STATUS_OPTIONS, ISSUE_TYPE_META, normalizeStatusForIssueType } from '../types/ticket';
 import { useCurrentUser, USERS } from '../context/UserContext';
+import { useSpaces } from '../context/SpaceContext';
 import { useTickets } from '../context/TicketContext';
+import { usersInSpace } from '../utils/issueUserFields';
+import { effectiveSpaceMemberIds } from '../types/space';
 
 const STATUS_OPTIONS: { value: TicketStatus; label: string }[] = [
   { value: 'planned', label: 'Planned' },
@@ -18,6 +21,9 @@ interface CreateTaskModalProps {
   initialStatus?: TicketStatus;
   nextId?: string;
   allowedIssueTypes?: IssueType[];
+  /** When set (e.g. creating from Board), the issue joins this sprint instead of Backlog. */
+  sprintId?: string;
+  sprintName?: string;
   onConfirm?: (ticket: Ticket) => void;
   onClose: () => void;
 }
@@ -26,19 +32,27 @@ export function CreateTaskModal({
   initialStatus = 'planned',
   nextId: nextIdProp,
   allowedIssueTypes = CREATABLE_TYPES,
+  sprintId,
+  sprintName,
   onConfirm,
   onClose,
 }: CreateTaskModalProps) {
   const { currentUser } = useCurrentUser();
+  const { currentSpace } = useSpaces();
   const { nextId: ctxNextId, addTicket } = useTickets();
   const resolvedNextId = nextIdProp ?? ctxNextId;
+  const spaceAssignees = useMemo(
+    () => usersInSpace(USERS, effectiveSpaceMemberIds(currentSpace)),
+    [currentSpace],
+  );
 
   const [issueType, setIssueType] = useState<IssueType>(
-    allowedIssueTypes.includes('task') ? 'task' : allowedIssueTypes[0],
+    allowedIssueTypes.includes('epic') ? 'epic' : allowedIssueTypes[0],
   );
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState<TicketStatus>(initialStatus);
   const [assignee, setAssignee] = useState('');
+  const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const titleRef = useRef<HTMLInputElement>(null);
 
@@ -55,10 +69,15 @@ export function CreateTaskModal({
     }
   }, [allowedIssueTypes, issueType]);
 
+  useEffect(() => {
+    setStatus((current) => issueType === 'epic' ? 'planned' : normalizeStatusForIssueType(issueType, current));
+  }, [issueType]);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
     const assigneeUser = assignee ? USERS.find((u) => u.name === assignee) : undefined;
+    const assignToSprint = issueType !== 'epic' && Boolean(sprintId);
     const ticket: Ticket = {
       id: resolvedNextId,
       title: title.trim(),
@@ -68,9 +87,13 @@ export function CreateTaskModal({
       assigneeId: assigneeUser ? Number(assigneeUser.id) : undefined,
       reporter: currentUser.name,
       reporterId: Number(currentUser.id),
+      startDate: startDate || undefined,
       dueDate: dueDate
         ? new Date(dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         : undefined,
+      ...(assignToSprint
+        ? { sprintId, sprint: sprintName || undefined }
+        : {}),
     };
     if (onConfirm) {
       onConfirm(ticket);
@@ -133,28 +156,41 @@ export function CreateTaskModal({
               id="task-status"
               className="modal__select"
               value={status}
+              disabled={issueType === 'epic'}
               onChange={(e) => setStatus(e.target.value as TicketStatus)}
             >
-              {STATUS_OPTIONS.map(({ value, label }) => (
+              {(issueType === 'epic' ? EPIC_STATUS_OPTIONS.slice(0, 1) : STATUS_OPTIONS).map(({ value, label }) => (
                 <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="modal__field">
+            <label className="modal__label" htmlFor="task-assignee">Assignee</label>
+            <select
+              id="task-assignee"
+              className="modal__select"
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {spaceAssignees.map((u) => (
+                <option key={u.id} value={u.name}>{u.name}</option>
               ))}
             </select>
           </div>
 
           <div className="modal__row">
             <div className="modal__field">
-              <label className="modal__label" htmlFor="task-assignee">Assignee</label>
-              <select
-                id="task-assignee"
-                className="modal__select"
-                value={assignee}
-                onChange={(e) => setAssignee(e.target.value)}
-              >
-                <option value="">Unassigned</option>
-                {USERS.map((u) => (
-                  <option key={u.id} value={u.name}>{u.name}</option>
-                ))}
-              </select>
+              <label className="modal__label" htmlFor="task-start">Start Date</label>
+              <input
+                id="task-start"
+                className="modal__input"
+                type="date"
+                value={startDate}
+                max={dueDate || undefined}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
             </div>
             <div className="modal__field">
               <label className="modal__label" htmlFor="task-due">Due Date</label>
@@ -163,6 +199,7 @@ export function CreateTaskModal({
                 className="modal__input"
                 type="date"
                 value={dueDate}
+                min={startDate || undefined}
                 onChange={(e) => setDueDate(e.target.value)}
               />
             </div>
@@ -174,7 +211,9 @@ export function CreateTaskModal({
           </div>
 
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
-            This issue will be added to the <strong>Backlog</strong> (no sprint assigned).
+            {sprintId && issueType !== 'epic'
+              ? <>This issue will be added to <strong>{sprintName || 'the active sprint'}</strong>.</>
+              : <>This issue will be added to the <strong>Backlog</strong> (no sprint assigned).</>}
           </p>
 
           <div className="modal__footer">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSpaces } from '../context/SpaceContext';
 import { useCurrentUser } from '../context/UserContext';
@@ -10,11 +10,16 @@ import { SpacePeopleModal } from './SpacePeopleModal';
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { spaces, currentSpace, setCurrentSpace } = useSpaces();
+  const { spaces, currentSpace, setCurrentSpace, hydrateSpace } = useSpaces();
   const { currentUser } = useCurrentUser();
   const [showCreate, setShowCreate] = useState(false);
   const [peopleSpaceId, setPeopleSpaceId] = useState<string | null>(null);
   const peopleSpace = peopleSpaceId ? spaces.find((s) => s.id === peopleSpaceId) : undefined;
+
+  useEffect(() => {
+    if (!peopleSpaceId) return;
+    void hydrateSpace(peopleSpaceId);
+  }, [peopleSpaceId, hydrateSpace]);
 
   return (
     <>

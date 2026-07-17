@@ -42,8 +42,8 @@ interface SpaceContextValue {
   createSpace: (name: string, key: string) => Space;
   addMember: (spaceId: string, userId: string) => void;
   removeMember: (spaceId: string, userId: string) => void;
-  addGroup: (spaceId: string, groupId: string) => void;
-  removeGroup: (spaceId: string, groupId: string) => void;
+  addGroup: (spaceId: string, groupId: string) => Promise<boolean>;
+  removeGroup: (spaceId: string, groupId: string) => Promise<boolean>;
   refreshSpaces: () => void;
 }
 
@@ -63,11 +63,6 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
     }
     return mapped[0];
   }
-
-  const setCurrentSpaceAndPersist = useCallback((space: Space) => {
-    localStorage.setItem(STORAGE_KEY, space.id);
-    setCurrentSpace(space);
-  }, []);
 
   const mergeSpaceFromDto = useCallback((dto: SpaceDto) => {
     const full = dtoToSpace(dto);
@@ -89,26 +84,37 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
     [mergeSpaceFromDto],
   );
 
+  const setCurrentSpaceAndPersist = useCallback((space: Space) => {
+    localStorage.setItem(STORAGE_KEY, space.id);
+    setCurrentSpace(space);
+    // Space list rows are intentionally lean (groups omitted). Always hydrate
+    // the selected space so inherited membership is available to every page.
+    void hydrateSpace(space.id);
+  }, [hydrateSpace]);
+
   const fetchSpaces = useCallback(() => {
     const uid = Number(currentUser.id);
     return spaceApi.getAll(uid)
-      .then((dtos) => {
-        const mapped = dtos.map(dtoToSpace);
-        setSpaces(mapped);
-        return mapped;
-      });
+      .then((dtos) => dtos.map(dtoToSpace));
   }, [currentUser.id]);
 
   const refreshSpaces = useCallback(() => {
     fetchSpaces()
       .then((mapped) => {
+        // The list endpoint intentionally returns groups: []. Do not let a
+        // general list refresh erase group links already hydrated for a space.
+        const mappedWithGroups = mapped.map((next) => {
+          const existing = spaces.find((space) => space.id === next.id);
+          return existing ? { ...next, groups: existing.groups } : next;
+        });
+        setSpaces(mappedWithGroups);
         setCurrentSpace((prev) => {
-          const found = mapped.find((s) => s.id === prev.id);
-          return found ?? pickCurrentSpace(mapped);
+          const found = mappedWithGroups.find((s) => s.id === prev.id);
+          return found ?? pickCurrentSpace(mappedWithGroups);
         });
         const savedId = localStorage.getItem(STORAGE_KEY);
         const resolved =
-          (savedId ? mapped.find((s) => s.id === savedId) : undefined) ?? pickCurrentSpace(mapped);
+          (savedId ? mappedWithGroups.find((s) => s.id === savedId) : undefined) ?? pickCurrentSpace(mappedWithGroups);
         if (resolved.id) {
           const idNum = Number(resolved.id);
           if (Number.isFinite(idNum) && idNum > 0) {
@@ -117,7 +123,7 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
         }
       })
       .catch(() => {});
-  }, [fetchSpaces, mergeSpaceFromDto]);
+  }, [fetchSpaces, mergeSpaceFromDto, spaces]);
 
   useEffect(() => {
     if (!apiReady) return;
@@ -225,43 +231,60 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
 
   const addGroup = useCallback((spaceId: string, groupId: string) => {
     const space = spaces.find((s) => s.id === spaceId);
-    if (!space || !isSpaceOwner(space, currentUser.id)) return;
+    if (!space || !isSpaceOwner(space, currentUser.id)) return Promise.resolve(false);
+
+    if (space.groups.some((group) => group.id === groupId)) return Promise.resolve(true);
+
+    if (apiReady) {
+      return spaceApi.addGroup(Number(spaceId), Number(groupId))
+        .then(async () => {
+          // Reload only this space. Its full DTO contains every linked group and
+          // member, so overlapping group membership is re-derived as a union.
+          const dto = await spaceApi.getById(Number(spaceId));
+          mergeSpaceFromDto(dto);
+          return true;
+        })
+        .catch((e) => {
+          alert(e instanceof Error ? e.message : 'Failed to add group');
+          return false;
+        });
+    }
 
     setSpaces((prev) =>
       prev.map((s) =>
-        s.id === spaceId && !s.groups.some((g) => g.id === groupId)
-          ? { ...s, groups: [...s.groups, { id: groupId, name: 'Loading...', memberIds: [] }] }
+        s.id === spaceId
+          ? { ...s, groups: [...s.groups, { id: groupId, name: 'Group', memberIds: [] }] }
           : s,
       ),
     );
     setCurrentSpace((prev) =>
-      prev.id === spaceId && !prev.groups.some((g) => g.id === groupId)
-        ? { ...prev, groups: [...prev.groups, { id: groupId, name: 'Loading...', memberIds: [] }] }
+      prev.id === spaceId
+        ? { ...prev, groups: [...prev.groups, { id: groupId, name: 'Group', memberIds: [] }] }
         : prev,
     );
-
-    if (apiReady) {
-      spaceApi.addGroup(Number(spaceId), Number(groupId))
-        .then(() => refreshSpaces())
-        .catch((e) => {
-          setSpaces((prev) =>
-            prev.map((s) =>
-              s.id === spaceId ? { ...s, groups: s.groups.filter((g) => g.id !== groupId) } : s,
-            ),
-          );
-          setCurrentSpace((prev) =>
-            prev.id === spaceId ? { ...prev, groups: prev.groups.filter((g) => g.id !== groupId) } : prev,
-          );
-          alert(e instanceof Error ? e.message : 'Failed to add group');
-        });
-    }
-  }, [apiReady, refreshSpaces, spaces, currentUser.id]);
+    return Promise.resolve(true);
+  }, [apiReady, mergeSpaceFromDto, spaces, currentUser.id]);
 
   const removeGroup = useCallback((spaceId: string, groupId: string) => {
     const space = spaces.find((s) => s.id === spaceId);
-    if (!space || !isSpaceOwner(space, currentUser.id)) return;
+    if (!space || !isSpaceOwner(space, currentUser.id)) return Promise.resolve(false);
+    if (!space.groups.some((group) => group.id === groupId)) return Promise.resolve(true);
 
-    const prevGroup = spaces.find((s) => s.id === spaceId)?.groups.find((g) => g.id === groupId);
+    if (apiReady) {
+      return spaceApi.removeGroup(Number(spaceId), Number(groupId))
+        .then(async () => {
+          // Never call the lean list endpoint here: it has groups: [] and used
+          // to make every other group disappear after removing just one.
+          const dto = await spaceApi.getById(Number(spaceId));
+          mergeSpaceFromDto(dto);
+          return true;
+        })
+        .catch((e) => {
+          alert(e instanceof Error ? e.message : 'Failed to remove group');
+          return false;
+        });
+    }
+
     setSpaces((prev) =>
       prev.map((s) =>
         s.id === spaceId ? { ...s, groups: s.groups.filter((g) => g.id !== groupId) } : s,
@@ -270,29 +293,8 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
     setCurrentSpace((prev) =>
       prev.id === spaceId ? { ...prev, groups: prev.groups.filter((g) => g.id !== groupId) } : prev,
     );
-
-    if (apiReady) {
-      spaceApi.removeGroup(Number(spaceId), Number(groupId))
-        .then(() => refreshSpaces())
-        .catch((e) => {
-          if (prevGroup) {
-            setSpaces((prev) =>
-              prev.map((s) =>
-                s.id === spaceId && !s.groups.some((g) => g.id === groupId)
-                  ? { ...s, groups: [...s.groups, prevGroup] }
-                  : s,
-              ),
-            );
-            setCurrentSpace((prev) =>
-              prev.id === spaceId && !prev.groups.some((g) => g.id === groupId)
-                ? { ...prev, groups: [...prev.groups, prevGroup] }
-                : prev,
-            );
-          }
-          alert(e instanceof Error ? e.message : 'Failed to remove group');
-        });
-    }
-  }, [apiReady, refreshSpaces, spaces, currentUser.id]);
+    return Promise.resolve(true);
+  }, [apiReady, mergeSpaceFromDto, spaces, currentUser.id]);
 
   return (
     <SpaceContext.Provider

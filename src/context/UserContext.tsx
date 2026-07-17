@@ -178,39 +178,57 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     void loadUsersBootstrap();
   }, [loadUsersBootstrap]);
 
+  // Fired by the API client on a 401 to an authenticated request (expired/revoked JWT).
+  // Drop the session so RequireAuth redirects to /login instead of the UI hanging on "Loading…".
+  useEffect(() => {
+    function onSessionExpired() {
+      clearAuthToken();
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      setCurrentUser(EMPTY_USER);
+      setIsAuthenticated(false);
+    }
+    window.addEventListener('auth:session-expired', onSessionExpired);
+    return () => window.removeEventListener('auth:session-expired', onSessionExpired);
+  }, []);
+
   const applyOAuthSession = useCallback(
     async (accessToken: string) => {
-      setAuthToken(accessToken);
       const payload = parseJwtPayload(accessToken);
       const uid = uidFromJwtPayload(payload);
-      let user: AppUser;
-      if (uid != null) {
-        try {
-          const dto: UserDto = await userApi.getById(uid);
-          user = dtoToAppUser(dto);
-        } catch {
-          user = {
-            id: String(uid),
-            username: usernameFromJwtPayload(payload) ?? 'user',
-            name: nameFromJwtPayload(payload) ?? 'User',
-            avatarColor: 'linear-gradient(135deg, #ea4335, #fbbc04)',
-            passwordLoginEnabled: false,
-          };
-        }
-      } else {
-        user = {
-          id: '',
-          username: usernameFromJwtPayload(payload) ?? 'user',
-          name: nameFromJwtPayload(payload) ?? 'User',
-          avatarColor: 'linear-gradient(135deg, #ea4335, #fbbc04)',
-          passwordLoginEnabled: false,
-        };
+      if (uid == null) {
+        throw new Error('OAuth token is missing a user id');
       }
+
+      // Establish token + user metadata together before any await. User bootstrap
+      // may still be completing from the login page; without this provisional
+      // record it can mistake OAuth for an empty session and clear the new token.
+      let user: AppUser = {
+        id: String(uid),
+        username: usernameFromJwtPayload(payload) ?? 'user',
+        name: nameFromJwtPayload(payload) ?? 'User',
+        avatarColor: 'linear-gradient(135deg, #24292f, #57606a)',
+        passwordLoginEnabled: false,
+      };
+      setAuthToken(accessToken);
       setCurrentUser(user);
       setIsAuthenticated(true);
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
       setApiReady(true);
       setUsersLoadError(null);
+
+      try {
+        const dto: UserDto = await userApi.getById(uid);
+        user = dtoToAppUser(dto);
+      } catch {
+        /* JWT identity is enough to finish sign-in; background sync may recover details. */
+      }
+
+      // Re-assert both values after the async lookup in case an older bootstrap
+      // completed concurrently while the OAuth callback was in flight.
+      setAuthToken(accessToken);
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
       // Do not block OAuth callback redirect on user list bootstrap.
       void syncUsersFromApi().then((mapped) => {
         if (mapped && mapped.length > 0) {

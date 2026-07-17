@@ -1,12 +1,14 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import type { Ticket, TicketStatus, TicketPriority, TicketLabel, IssueType } from '../types/ticket';
-import type { Sprint, SprintStatus } from '../types/sprint';
+import { FLAGGED_API_LABEL, labelsForIssueType, normalizeStatusForIssueType } from '../types/ticket';
+import type { Sprint, SprintStatus, SprintReorderAction } from '../types/sprint';
 import { useSpaces } from './SpaceContext';
 import { useCurrentUser } from './UserContext';
 import { issueApi, sprintApi, commentApi, issueLinkApi, codeLinkApi } from '../api';
 import type { IssueDto, SprintDto, UpdateIssueRequest } from '../api';
 import { USERS } from './UserContext';
-import { getDescendantKeys, getDescendantSubtaskKeys, isSubtask } from '../utils/ticketHierarchy';
+import { getDescendantKeys, getDescendantSubtaskKeys, isSubtask, withDerivedEpicStatuses } from '../utils/ticketHierarchy';
+import { findOverlappingSprint, validateSprintDates } from '../utils/sprintConstraints';
 
 /**
  * REST APIs use numeric DB space ids. Client-only ids like `space-173...` must not be used.
@@ -45,18 +47,21 @@ async function ticketsFromLeanAndMergeDetails(
       /* keep lean row */
     }
   }
-  return tickets;
+  return withDerivedEpicStatuses(tickets);
 }
 
 function issueDtoToTicket(dto: IssueDto): Ticket {
+  const apiLabels = dto.labels ?? [];
+  const issueType = (dto.issueType as IssueType) ?? 'task';
   return {
     id: dto.issueKey,
     dbId: dto.id,
     createdAt: dto.createdAt ?? undefined,
+    updatedAt: dto.updatedAt ?? undefined,
     title: dto.title,
-    issueType: (dto.issueType as IssueType) ?? 'task',
+    issueType,
     description: dto.description ?? undefined,
-    status: (dto.status as TicketStatus) ?? 'planned',
+    status: normalizeStatusForIssueType(issueType, (dto.status as TicketStatus) ?? 'planned'),
     assignee: dto.assigneeName ?? undefined,
     assigneeId: dto.assigneeId ?? undefined,
     reporter: dto.reporterName ?? undefined,
@@ -65,17 +70,22 @@ function issueDtoToTicket(dto: IssueDto): Ticket {
     startDate: dto.startDate ?? undefined,
     storyPoints: dto.storyPoints ?? undefined,
     priority: (dto.priority as TicketPriority) ?? undefined,
-    labels: (dto.labels as TicketLabel[]) ?? undefined,
+    labels: labelsForIssueType(
+      issueType,
+      apiLabels.filter((label) => label !== FLAGGED_API_LABEL) as TicketLabel[],
+    ),
+    flagged: dto.flagged === true || apiLabels.includes(FLAGGED_API_LABEL),
     parentId: dto.parentKey ?? undefined,
     subtaskIds: dto.childKeys ?? undefined,
     sprintId: dto.sprintId != null ? String(dto.sprintId) : undefined,
     sprint: dto.sprintName ?? undefined,
+    issueOrder: dto.issueOrder ?? 0,
     comments: dto.comments?.map((c) => ({
       id: String(c.id),
       authorId: c.authorId,
       author: c.authorName,
       content: c.content,
-      createdAt: new Date(c.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      createdAt: c.createdAt,
     })) ?? [],
     linkedIssues: dto.linkedIssues?.map((l) => ({
       id: l.id,
@@ -131,16 +141,20 @@ function buildIssueUpdateBody(
     title: updated.title,
     description: updated.description,
     issueType: updated.issueType,
-    status: updated.status,
+    status: normalizeStatusForIssueType(updated.issueType, updated.status),
     priority: updated.priority,
     storyPoints: updated.storyPoints,
-    labels: updated.labels,
+    labels: [
+      ...labelsForIssueType(updated.issueType, updated.labels),
+      ...(updated.flagged ? [FLAGGED_API_LABEL] : []),
+    ],
     sprintId: updated.sprintId ? Number(updated.sprintId) : undefined,
     clearSprint: !updated.sprintId,
     parentId: parentDbId,
     clearParent,
     startDate: toIsoDate(updated.startDate),
     dueDate: toIsoDate(updated.dueDate),
+    issueOrder: updated.issueOrder,
     assigneeId: hasAssignee ? assigneeId : undefined,
     clearAssignee: !hasAssignee,
     reporterId: hasReporter ? reporterId : undefined,
@@ -156,6 +170,7 @@ function sprintDtoToSprint(dto: SprintDto): Sprint {
     startDate: dto.startDate ?? '',
     endDate: dto.endDate ?? '',
     status: (dto.status as SprintStatus) ?? 'future',
+    sprintOrder: dto.sprintOrder,
   };
 }
 
@@ -170,12 +185,35 @@ interface TicketContextValue {
   setTickets: React.Dispatch<React.SetStateAction<Ticket[]>>;
   setSprints: React.Dispatch<React.SetStateAction<Sprint[]>>;
   addTicket: (ticket: Ticket) => void;
-  updateTicket: (updated: Ticket) => void;
-  updateTicketStatus: (ticketId: string, newStatus: TicketStatus) => void;
-  createSubtask: (parentId: string, title: string) => void;
+  /** Resolves true when the change was accepted (or API mode is off), false when the server rejected/was unreachable. */
+  updateTicket: (updated: Ticket) => Promise<boolean>;
+  updateTicketStatus: (
+    ticketId: string,
+    newStatus: TicketStatus,
+    options?: {
+      cascadeSubtasks?: boolean;
+      /** New root ordering for affected board columns. */
+      rankUpdates?: Array<{ ticketId: string; issueOrder: number }>;
+    },
+  ) => void;
+  /** Persist backlog/sprint root ranking (and optional sprint move) like Jira rank. */
+  applyBacklogRank: (
+    updates: Array<{ ticketId: string; issueOrder: number; sprintId?: string | null }>,
+  ) => void;
+  createSubtask: (parentId: string, title: string) => Promise<boolean>;
   createSprint: () => void;
   startSprint: (sprintId: string, updates: Pick<Sprint, 'startDate' | 'endDate' | 'goal'>) => void;
-  completeSprint: (sprintId: string) => void;
+  completeSprint: (
+    sprintId: string,
+    options?: {
+      incompleteDestination?: 'backlog' | 'future_sprint' | 'new_sprint';
+      moveToSprintId?: string;
+      newSprintName?: string;
+    },
+  ) => void;
+  reorderSprint: (sprintId: string, action: SprintReorderAction) => void;
+  updateSprint: (sprintId: string, updates: Partial<Pick<Sprint, 'name' | 'goal' | 'startDate' | 'endDate'>>) => void;
+  deleteSprint: (sprintId: string) => void;
   createIssueInSprint: (sprintId: string | null, title: string) => void;
   deleteTicket: (ticketId: string) => void;
   addComment: (issueDbId: number, authorId: number, content: string) => void;
@@ -228,10 +266,40 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         options?.mergeDetailForKeys,
       );
       const sprints = sprintDtos.map(sprintDtoToSprint);
-      setDataBySpace((prev) => ({
-        ...prev,
-        [spaceId]: { tickets, sprints },
-      }));
+      const rawStatusByKey = new Map(issueDtos.map((dto) => [dto.issueKey, dto.status]));
+      const epicStatusUpdates = tickets.filter(
+        (ticket) => ticket.issueType === 'epic' && rawStatusByKey.get(ticket.id) !== ticket.status,
+      );
+      if (epicStatusUpdates.length > 0) {
+        void Promise.allSettled(
+          epicStatusUpdates.map((epic) => issueApi.update(spaceIdNum, epic.id, { status: epic.status })),
+        );
+      }
+      // Only these keys were re-fetched with full detail this round; trust them verbatim.
+      const hydratedKeys = new Set(options?.mergeDetailForKeys ?? []);
+      setDataBySpace((prev) => {
+        // The lean space list returns EMPTY [] for detail collections (links/comments/…),
+        // not undefined — so a plain rebuild silently blanks every issue's links, making an
+        // open modal show "No linked work items" for links that exist server-side. Keep the
+        // last hydrated collections for issues we did NOT just re-fetch.
+        const prevById = new Map((prev[spaceId]?.tickets ?? []).map((t) => [t.id, t]));
+        const merged = tickets.map((t) => {
+          if (hydratedKeys.has(t.id)) return t;
+          const old = prevById.get(t.id);
+          if (!old) return t;
+          return {
+            ...t,
+            linkedIssues: old.linkedIssues ?? t.linkedIssues,
+            comments: old.comments ?? t.comments,
+            codeLinks: old.codeLinks ?? t.codeLinks,
+            attachments: old.attachments ?? t.attachments,
+          };
+        });
+        return {
+          ...prev,
+          [spaceId]: { tickets: merged, sprints },
+        };
+      });
       setLoadedSpaces((prev) => (prev[spaceId] ? prev : { ...prev, [spaceId]: true }));
     }).catch(() => {});
   }, [canApi, spaceIdNum, spaceId]);
@@ -244,7 +312,8 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     (action) => {
       setDataBySpace((prev) => {
         const old = prev[spaceId] ?? { tickets: [], sprints: [] };
-        const newTickets = typeof action === 'function' ? action(old.tickets) : action;
+        const changedTickets = typeof action === 'function' ? action(old.tickets) : action;
+        const newTickets = withDerivedEpicStatuses(changedTickets);
         return { ...prev, [spaceId]: { ...old, tickets: newTickets } };
       });
     },
@@ -259,7 +328,11 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         const merged = issueDtoToTicket(dto);
         setTickets((prev) => {
           const idx = prev.findIndex((t) => t.id === issueKey);
-          if (idx < 0) return prev;
+          // On the standalone /ticket/:key page (opened in a new tab) hydrate races the
+          // slower full-list load and can arrive first — the issue isn't in the list yet.
+          // Insert it instead of dropping the detail; the list rebuild dedups by id and
+          // preserves these hydrated collections.
+          if (idx < 0) return [...prev, merged];
           const next = [...prev];
           next[idx] = merged;
           return next;
@@ -291,7 +364,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
           title: ticket.title,
           description: ticket.description,
           issueType: ticket.issueType,
-          status: ticket.status,
+          status: normalizeStatusForIssueType(ticket.issueType, ticket.status),
           priority: ticket.priority,
           storyPoints: ticket.storyPoints,
           labels: ticket.labels,
@@ -310,10 +383,18 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
   // ── Update ticket (from TicketDetailModal) ──
   const updateTicket = useCallback(
     (updated: Ticket) => {
+      const existing = currentData.tickets.find((t) => t.id === updated.id);
+      if (existing && !isSubtask(existing) && isSubtask(updated)) {
+        alert('An existing issue cannot be converted to a subtask. Create it from a parent issue using Create child issue.');
+        return Promise.resolve(false);
+      }
+      // Subtask type is locked once created — ignore any attempted type change.
+      const typeLocked: Ticket =
+        existing && isSubtask(existing) ? { ...updated, issueType: 'subtask' } : updated;
       const normalized: Ticket =
-        updated.issueType === 'epic'
-          ? { ...updated, parentId: undefined, sprintId: undefined, sprint: '' }
-          : updated;
+        typeLocked.issueType === 'epic'
+          ? { ...typeLocked, parentId: undefined, sprintId: undefined, sprint: '' }
+          : typeLocked;
       const parentDbId = normalized.parentId
         ? currentData.tickets.find((t) => t.id === normalized.parentId)?.dbId
         : undefined;
@@ -338,69 +419,190 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         });
       });
       if (canApi && spaceIdNum != null) {
-        issueApi.update(spaceIdNum, normalized.id, buildIssueUpdateBody(normalized, parentDbId, clearParent))
-          .then(() => fetchFromApi({ mergeDetailForKeys: [normalized.id] }))
+        return issueApi.update(spaceIdNum, normalized.id, buildIssueUpdateBody(normalized, parentDbId, clearParent))
+          .then(() => {
+            fetchFromApi({ mergeDetailForKeys: [normalized.id] });
+            return true;
+          })
           .catch((e) => {
             fetchFromApi({ mergeDetailForKeys: [normalized.id] });
             alert(e instanceof Error ? e.message : 'Failed to update issue');
+            return false;
           });
       }
+      return Promise.resolve(true);
     },
     [setTickets, canApi, spaceIdNum, fetchFromApi, currentData.tickets],
   );
 
-  // ── Update single ticket status (drag & drop) ──
-  const updateTicketStatus = useCallback(
-    (ticketId: string, newStatus: TicketStatus) => {
-      setTickets((prev) =>
-        prev.map((t) => (t.id === ticketId ? { ...t, status: newStatus } : t)),
-      );
+  // ── Rank backlog / sprint roots (drag reorder) ──
+  const applyBacklogRank = useCallback(
+    (updates: Array<{ ticketId: string; issueOrder: number; sprintId?: string | null }>) => {
+      if (updates.length === 0) return;
+      const byId = new Map(updates.map((u) => [u.ticketId, u]));
+      const movedWithSprint = updates.find((u) => u.sprintId !== undefined);
+
+      setTickets((prev) => {
+        const sprintName =
+          movedWithSprint && movedWithSprint.sprintId
+            ? currentData.sprints.find((s) => s.id === movedWithSprint.sprintId)?.name
+            : undefined;
+        const cascadeKeys =
+          movedWithSprint && movedWithSprint.sprintId !== undefined
+            ? (() => {
+                const moved = prev.find((t) => t.id === movedWithSprint.ticketId);
+                if (!moved || isSubtask(moved)) return [] as string[];
+                return getDescendantSubtaskKeys(moved.id, prev);
+              })()
+            : [];
+
+        return prev.map((t) => {
+          const u = byId.get(t.id);
+          if (u) {
+            const next: Ticket = { ...t, issueOrder: u.issueOrder };
+            if (u.sprintId !== undefined) {
+              next.sprintId = u.sprintId ?? undefined;
+              next.sprint = u.sprintId ? sprintName : undefined;
+            }
+            return next;
+          }
+          if (cascadeKeys.includes(t.id) && movedWithSprint && movedWithSprint.sprintId !== undefined) {
+            return {
+              ...t,
+              sprintId: movedWithSprint.sprintId ?? undefined,
+              sprint: movedWithSprint.sprintId ? sprintName : undefined,
+            };
+          }
+          return t;
+        });
+      });
+
       if (canApi && spaceIdNum != null) {
-        issueApi.update(spaceIdNum, ticketId, { status: newStatus }).catch(() => {});
+        const tickets = currentData.tickets;
+        Promise.all(
+          updates.map((u) => {
+            const t = tickets.find((x) => x.id === u.ticketId);
+            if (!t?.dbId && !t) return Promise.resolve();
+            const body: UpdateIssueRequest = { issueOrder: u.issueOrder };
+            if (u.sprintId !== undefined) {
+              if (u.sprintId) body.sprintId = Number(u.sprintId);
+              else body.clearSprint = true;
+            }
+            return issueApi.update(spaceIdNum, u.ticketId, body);
+          }),
+        )
+          .then(() => fetchFromApi())
+          .catch((e) => {
+            fetchFromApi();
+            alert(e instanceof Error ? e.message : 'Failed to reorder issues');
+          });
       }
     },
-    [setTickets, canApi, spaceIdNum],
+    [setTickets, canApi, spaceIdNum, fetchFromApi, currentData.tickets, currentData.sprints],
+  );
+
+  // ── Update ticket status (board drag & drop) ──
+  // When a collapsed parent is moved, cascadeSubtasks moves all descendant
+  // subtasks with it. Expanded parents / individual subtasks move alone.
+  const updateTicketStatus = useCallback(
+    (
+      ticketId: string,
+      newStatus: TicketStatus,
+      options?: {
+        cascadeSubtasks?: boolean;
+        rankUpdates?: Array<{ ticketId: string; issueOrder: number }>;
+      },
+    ) => {
+      const moving = currentData.tickets.find((t) => t.id === ticketId);
+      const shouldCascade =
+        Boolean(options?.cascadeSubtasks) && Boolean(moving) && !isSubtask(moving!);
+      const keys = shouldCascade
+        ? [ticketId, ...getDescendantSubtaskKeys(ticketId, currentData.tickets)]
+        : [ticketId];
+      const keySet = new Set(keys);
+      const rankById = new Map(
+        (options?.rankUpdates ?? []).map((update) => [update.ticketId, update.issueOrder]),
+      );
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          const rankedOrder = rankById.get(t.id);
+          if (!keySet.has(t.id) && rankedOrder === undefined) return t;
+          return {
+            ...t,
+            ...(keySet.has(t.id) ? { status: newStatus } : {}),
+            ...(rankedOrder !== undefined ? { issueOrder: rankedOrder } : {}),
+          };
+        }),
+      );
+      if (canApi && spaceIdNum != null) {
+        const idsToUpdate = new Set([...keys, ...rankById.keys()]);
+        Promise.all(Array.from(idsToUpdate, (id) => {
+          const body: UpdateIssueRequest = {};
+          if (keySet.has(id)) body.status = newStatus;
+          const rankedOrder = rankById.get(id);
+          if (rankedOrder !== undefined) body.issueOrder = rankedOrder;
+          return issueApi.update(spaceIdNum, id, body);
+        }))
+          .then(() => fetchFromApi())
+          .catch(() => {
+            fetchFromApi();
+          });
+      }
+    },
+    [setTickets, canApi, spaceIdNum, currentData.tickets, fetchFromApi],
   );
 
   // ── Create subtask ──
   const createSubtask = useCallback(
-    (parentId: string, title: string) => {
+    async (parentId: string, title: string): Promise<boolean> => {
       const parentTicket = currentData.tickets.find((t) => t.id === parentId);
       if (parentTicket?.issueType === 'epic') {
         window.alert(
           'Epics do not have subtasks in Jira. Create a story or task and link it to this epic, then add subtasks under that work item.',
         );
-        return;
+        return false;
       }
       if (canApi && spaceIdNum != null) {
-        issueApi.create(spaceIdNum, {
-          title,
-          issueType: 'subtask',
-          status: parentTicket?.status ?? 'planned',
-          parentId: parentTicket?.dbId,
-          sprintId: parentTicket?.sprintId ? Number(parentTicket.sprintId) : undefined,
-          reporterId: Number(currentUser.id),
-        }).then(() => fetchFromApi()).catch(() => {});
-      } else {
-        setTickets((prev) => {
-          const key = currentSpace.key;
-          const nums = prev.map((t) => parseInt(t.id.replace(/\D/g, ''), 10)).filter(Boolean);
-          const newId = `${key}-${nums.length > 0 ? Math.max(...nums) + 1 : 1}`;
-          const parent = prev.find((t) => t.id === parentId);
-          const subtask: Ticket = {
-            id: newId,
+        if (parentTicket?.dbId == null) {
+          window.alert('Cannot create child issue: parent issue is not loaded yet. Close and reopen the issue, then try again.');
+          return false;
+        }
+        try {
+          await issueApi.create(spaceIdNum, {
             title,
-            status: parent?.status ?? 'planned',
             issueType: 'subtask',
-            parentId,
-            sprintId: parent?.sprintId,
-          };
-          return [
-            ...prev.map((t) => t.id === parentId ? { ...t, subtaskIds: [...(t.subtaskIds ?? []), newId] } : t),
-            subtask,
-          ];
-        });
+            status: parentTicket.status ?? 'planned',
+            parentId: parentTicket.dbId,
+            sprintId: parentTicket.sprintId ? Number(parentTicket.sprintId) : undefined,
+            reporterId: Number(currentUser.id),
+          });
+          await fetchFromApi();
+          return true;
+        } catch (e) {
+          window.alert(e instanceof Error ? e.message : 'Failed to create child issue');
+          return false;
+        }
       }
+      setTickets((prev) => {
+        const key = currentSpace.key;
+        const nums = prev.map((t) => parseInt(t.id.replace(/\D/g, ''), 10)).filter(Boolean);
+        const newId = `${key}-${nums.length > 0 ? Math.max(...nums) + 1 : 1}`;
+        const parent = prev.find((t) => t.id === parentId);
+        const subtask: Ticket = {
+          id: newId,
+          title,
+          status: parent?.status ?? 'planned',
+          issueType: 'subtask',
+          parentId,
+          sprintId: parent?.sprintId,
+        };
+        return [
+          ...prev.map((t) => t.id === parentId ? { ...t, subtaskIds: [...(t.subtaskIds ?? []), newId] } : t),
+          subtask,
+        ];
+      });
+      return true;
     },
     [canApi, spaceIdNum, fetchFromApi, setTickets, currentSpace.key, currentData.tickets, currentUser.id],
   );
@@ -476,6 +678,26 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
   // ── Start sprint ──
   const startSprint = useCallback(
     (sprintId: string, updates: Pick<Sprint, 'startDate' | 'endDate' | 'goal'>) => {
+      const active = currentData.sprints.find((s) => s.status === 'active' && s.id !== sprintId);
+      if (active) {
+        alert(`There can only be one active sprint. Complete "${active.name}" first.`);
+        return;
+      }
+      const dateErr = validateSprintDates(updates.startDate, updates.endDate);
+      if (dateErr) {
+        alert(dateErr);
+        return;
+      }
+      const overlap = findOverlappingSprint(
+        currentData.sprints,
+        updates.startDate,
+        updates.endDate,
+        sprintId,
+      );
+      if (overlap) {
+        alert(`Sprint dates overlap with "${overlap.name}" (${overlap.startDate} – ${overlap.endDate}).`);
+        return;
+      }
       setSprints((prev) => prev.map((s) => s.id === sprintId ? { ...s, ...updates, status: 'active' as SprintStatus } : s));
       if (canApi && spaceIdNum != null) {
         sprintApi.update(spaceIdNum, Number(sprintId), {
@@ -483,26 +705,174 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
           endDate: updates.endDate,
           goal: updates.goal,
           status: 'active',
-        }).catch(() => {});
+        }).catch((e) => {
+          fetchFromApi();
+          alert(e instanceof Error ? e.message : 'Failed to start sprint');
+        });
       }
     },
-    [setSprints, canApi, spaceIdNum],
+    [setSprints, canApi, spaceIdNum, currentData.sprints, fetchFromApi],
   );
 
-  // ── Complete sprint ──
+  // ── Complete sprint (Jira-style: choose where incomplete issues go) ──
   const completeSprint = useCallback(
-    (sprintId: string) => {
-      setSprints((prev) => prev.map((s) => s.id === sprintId ? { ...s, status: 'completed' as SprintStatus } : s));
-      setTickets((prev) => prev.map((t) =>
-        t.sprintId === sprintId && t.status !== 'done' ? { ...t, sprintId: undefined } : t
-      ));
+    (
+      sprintId: string,
+      options?: {
+        incompleteDestination?: 'backlog' | 'future_sprint' | 'new_sprint';
+        moveToSprintId?: string;
+        newSprintName?: string;
+      },
+    ) => {
+      const destination = options?.incompleteDestination ?? 'backlog';
+      let destSprintId: string | undefined;
+      let destSprintName: string | undefined;
+      let createdSprint: Sprint | null = null;
+
+      if (destination === 'future_sprint' && options?.moveToSprintId) {
+        destSprintId = options.moveToSprintId;
+        destSprintName = currentData.sprints.find((s) => s.id === destSprintId)?.name;
+      } else if (destination === 'new_sprint') {
+        destSprintId = `sprint-${Date.now()}`;
+        destSprintName = options?.newSprintName?.trim() || `Sprint ${currentData.sprints.length + 1}`;
+        createdSprint = {
+          id: destSprintId,
+          name: destSprintName,
+          startDate: '',
+          endDate: '',
+          status: 'future',
+        };
+      }
+
+      setSprints((prev) => {
+        const next = prev.map((s) =>
+          s.id === sprintId ? { ...s, status: 'completed' as SprintStatus } : s,
+        );
+        return createdSprint ? [...next, createdSprint] : next;
+      });
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          if (t.sprintId !== sprintId || t.status === 'done') return t;
+          if (destination === 'backlog' || !destSprintId) {
+            return { ...t, sprintId: undefined, sprint: undefined };
+          }
+          return { ...t, sprintId: destSprintId, sprint: destSprintName };
+        }),
+      );
+
       if (canApi && spaceIdNum != null) {
-        sprintApi.update(spaceIdNum, Number(sprintId), { status: 'completed' })
+        sprintApi
+          .complete(spaceIdNum, Number(sprintId), {
+            incompleteDestination: destination,
+            moveToSprintId:
+              destination === 'future_sprint' && options?.moveToSprintId
+                ? Number(options.moveToSprintId)
+                : undefined,
+            newSprintName: destination === 'new_sprint' ? destSprintName : undefined,
+          })
           .then(() => fetchFromApi())
-          .catch(() => {});
+          .catch((e) => {
+            fetchFromApi();
+            alert(e instanceof Error ? e.message : 'Failed to complete sprint');
+          });
       }
     },
-    [setSprints, setTickets, canApi, spaceIdNum, fetchFromApi],
+    [setSprints, setTickets, canApi, spaceIdNum, fetchFromApi, currentData.sprints],
+  );
+
+  // ── Reorder future sprint (Jira: move up/down among planned sprints only) ──
+  const reorderSprint = useCallback(
+    (sprintId: string, action: SprintReorderAction) => {
+      const applyLocalReorder = (list: Sprint[]): Sprint[] => {
+        const future = list.filter((s) => s.status === 'future');
+        const others = list.filter((s) => s.status !== 'future');
+        const index = future.findIndex((s) => s.id === sprintId);
+        if (index < 0) return list;
+        let target = index;
+        if (action === 'move_up') target = Math.max(0, index - 1);
+        else if (action === 'move_down') target = Math.min(future.length - 1, index + 1);
+        else if (action === 'move_to_top') target = 0;
+        else if (action === 'move_to_bottom') target = future.length - 1;
+        if (target === index) return list;
+        const nextFuture = [...future];
+        const [moving] = nextFuture.splice(index, 1);
+        nextFuture.splice(target, 0, moving);
+        const withOrder = nextFuture.map((s, i) => ({ ...s, sprintOrder: i }));
+        const completed = others.filter((s) => s.status === 'completed');
+        const active = others.filter((s) => s.status === 'active');
+        return [...completed, ...active, ...withOrder];
+      };
+
+      setSprints(applyLocalReorder);
+      if (canApi && spaceIdNum != null) {
+        sprintApi.reorder(spaceIdNum, Number(sprintId), { action })
+          .then((dtos) => setSprints(dtos.map(sprintDtoToSprint)))
+          .catch((e) => {
+            fetchFromApi();
+            alert(e instanceof Error ? e.message : 'Failed to reorder sprint');
+          });
+      }
+    },
+    [setSprints, canApi, spaceIdNum, fetchFromApi],
+  );
+
+  // ── Update sprint (name/goal/dates) ──
+  const updateSprint = useCallback(
+    (sprintId: string, updates: Partial<Pick<Sprint, 'name' | 'goal' | 'startDate' | 'endDate'>>) => {
+      const current = currentData.sprints.find((s) => s.id === sprintId);
+      if (!current) return;
+      const nextStart = updates.startDate ?? current.startDate;
+      const nextEnd = updates.endDate ?? current.endDate;
+      if (updates.startDate !== undefined || updates.endDate !== undefined) {
+        if (nextStart || nextEnd) {
+          const dateErr = validateSprintDates(nextStart, nextEnd);
+          if (dateErr) {
+            alert(dateErr);
+            return;
+          }
+          const overlap = findOverlappingSprint(currentData.sprints, nextStart, nextEnd, sprintId);
+          if (overlap) {
+            alert(`Sprint dates overlap with "${overlap.name}" (${overlap.startDate} – ${overlap.endDate}).`);
+            return;
+          }
+        }
+      }
+      setSprints((prev) => prev.map((s) => (s.id === sprintId ? { ...s, ...updates } : s)));
+      if (canApi && spaceIdNum != null) {
+        sprintApi.update(spaceIdNum, Number(sprintId), updates)
+          .then(() => fetchFromApi())
+          .catch((e) => {
+            fetchFromApi();
+            alert(e instanceof Error ? e.message : 'Failed to update sprint');
+          });
+      }
+    },
+    [setSprints, canApi, spaceIdNum, fetchFromApi, currentData.sprints],
+  );
+
+  // ── Delete sprint ──
+  const deleteSprint = useCallback(
+    (sprintId: string) => {
+      const destination = currentData.sprints.find((s) => s.status === 'future' && s.id !== sprintId) ?? null;
+      setSprints((prev) => prev.filter((s) => s.id !== sprintId));
+      setTickets((prev) =>
+        prev.map((t) =>
+          t.sprintId === sprintId
+            ? { ...t, sprintId: destination?.id, sprint: destination?.name }
+            : t,
+        ),
+      );
+      if (canApi && spaceIdNum != null) {
+        sprintApi.delete(spaceIdNum, Number(sprintId))
+          .then(() => fetchFromApi())
+          .catch((e) => {
+            fetchFromApi();
+            alert(e instanceof Error ? e.message : 'Failed to delete sprint');
+          });
+      }
+    },
+    [setSprints, setTickets, canApi, spaceIdNum, fetchFromApi, currentData.sprints],
   );
 
   // ── Add comment ──
@@ -615,10 +985,14 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         addTicket,
         updateTicket,
         updateTicketStatus,
+        applyBacklogRank,
         createSubtask,
         createSprint,
         startSprint,
         completeSprint,
+        reorderSprint,
+        updateSprint,
+        deleteSprint,
         createIssueInSprint,
         deleteTicket,
         addComment,

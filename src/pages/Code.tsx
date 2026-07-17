@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useSpaces } from '../context/SpaceContext';
 import { useTickets } from '../context/TicketContext';
+import { useCurrentUser } from '../context/UserContext';
+import { TicketDetailModal } from '../components/TicketDetailModal';
 import { codeLinkApi, githubRepoApi } from '../api';
 import type {
   IssueCodeLinkDto,
-  CodeLinkKind,
   SpaceGithubRepoDto,
   ScanResult,
 } from '../api';
@@ -13,17 +14,13 @@ import './Code.css';
 import { normalizeGithubAccountInput } from '../utils/githubAccount';
 import { formatRelativeAgo, formatRelativeAgoOrNever } from '../utils/relativeTime';
 
-const KIND_META: Record<CodeLinkKind, { icon: string; label: string; badge: string }> = {
-  pull_request: { icon: '⇅', label: 'Pull requests', badge: 'PR' },
-  commit: { icon: '◉', label: 'Commits', badge: 'Commit' },
-  branch: { icon: '⎇', label: 'Branches', badge: 'Branch' },
-  repo: { icon: '▣', label: 'Repositories', badge: 'Repo' },
-  other: { icon: '🔗', label: 'Other links', badge: 'Link' },
+const KIND_META: Record<'pull_request', { icon: string; label: string; badge: string }> = {
+  pull_request: { icon: '⇅', label: 'Pull requests linked to issues', badge: 'PR' },
 };
 
-const KIND_ORDER: CodeLinkKind[] = ['pull_request', 'commit', 'branch', 'repo', 'other'];
+/** Code page is PR-only. Branch/commit/repo/other links may exist on issues but are not listed here. */
+const KIND_ORDER: Array<'pull_request'> = ['pull_request'];
 
-type KindFilter = 'all' | CodeLinkKind;
 type ViewMode = 'active' | 'all';
 
 const ACTIVE_PR_STATES = new Set(['open', 'draft']);
@@ -38,20 +35,57 @@ function parseBackendSpaceId(id: string): number | null {
 
 export function Code() {
   const { currentSpace } = useSpaces();
-  const { tickets, refreshData } = useTickets();
-  const navigate = useNavigate();
+  const { currentUser } = useCurrentUser();
+  const {
+    tickets,
+    sprints,
+    refreshData,
+    deleteCodeLink,
+    updateTicket,
+    createSubtask,
+    deleteTicket,
+    addComment,
+    editComment,
+    deleteComment,
+    addIssueLink,
+    deleteIssueLink,
+    addCodeLink,
+    refreshCodeLinks,
+    hydrateIssueDetail,
+  } = useTickets();
+  const [searchParams, setSearchParams] = useSearchParams();
   const spaceDbId = parseBackendSpaceId(currentSpace.id);
+
+  const selectedTicketId = searchParams.get('ticket');
+  const selectedTicket = useMemo(
+    () => tickets.find((t) => t.id === selectedTicketId) ?? null,
+    [tickets, selectedTicketId],
+  );
+
+  useEffect(() => {
+    if (!selectedTicketId) return;
+    void hydrateIssueDetail(selectedTicketId);
+  }, [selectedTicketId, hydrateIssueDetail]);
+
+  function openTicket(id: string) {
+    setSearchParams({ ticket: id });
+  }
+
+  function closeTicket() {
+    setSearchParams({});
+  }
 
   const [links, setLinks] = useState<IssueCodeLinkDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('active');
-  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
-  const [repoFilter, setRepoFilter] = useState<string>('all');
-  const [commitsExpanded, setCommitsExpanded] = useState(false);
-  const [groupLimits, setGroupLimits] = useState<Record<CodeLinkKind, number>>({
-    pull_request: PAGE_SIZE, commit: PAGE_SIZE, branch: PAGE_SIZE, repo: PAGE_SIZE, other: PAGE_SIZE,
+  /** Selected owner/repo keys; empty = all repos. */
+  const [repoFilters, setRepoFilters] = useState<string[]>([]);
+  const [repoMenuOpen, setRepoMenuOpen] = useState(false);
+  const repoMenuRef = useRef<HTMLDivElement>(null);
+  const [groupLimits, setGroupLimits] = useState<Record<'pull_request', number>>({
+    pull_request: PAGE_SIZE,
   });
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -72,22 +106,43 @@ export function Code() {
     setLoading(true);
     codeLinkApi.getBySpace(spaceDbId)
       .then((items) => setLinks(items))
-      .catch(() => setLinks([]))
+      .catch((err) => {
+        setLinks([]);
+        setBanner(err instanceof Error ? err.message : 'Failed to load code links');
+      })
       .finally(() => setLoading(false));
   }, [spaceDbId]);
 
   const loadRepos = useCallback(() => {
     if (spaceDbId == null) return;
-    githubRepoApi.list(spaceDbId).then(setRepos).catch(() => setRepos([]));
+    githubRepoApi.list(spaceDbId)
+      .then((items) => setRepos(items))
+      .catch((err) => {
+        setRepos([]);
+        setBanner(err instanceof Error ? err.message : 'Failed to load repositories');
+      });
   }, [spaceDbId]);
 
-  useEffect(() => { loadLinks(); loadRepos(); }, [loadLinks, loadRepos]);
+  useEffect(() => {
+    setBanner(null);
+    loadLinks();
+    loadRepos();
+  }, [loadLinks, loadRepos]);
 
   useEffect(() => {
-    setGroupLimits({
-      pull_request: PAGE_SIZE, commit: PAGE_SIZE, branch: PAGE_SIZE, repo: PAGE_SIZE, other: PAGE_SIZE,
-    });
-  }, [viewMode, kindFilter, repoFilter, search]);
+    setGroupLimits({ pull_request: PAGE_SIZE });
+  }, [viewMode, repoFilters, search]);
+
+  useEffect(() => {
+    if (!repoMenuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (repoMenuRef.current && !repoMenuRef.current.contains(e.target as Node)) {
+        setRepoMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [repoMenuOpen]);
 
   /** Only connected space repos — avoids stale entries after disconnect / GitHub delete. */
   const repoOptions = useMemo(
@@ -96,11 +151,17 @@ export function Code() {
   );
 
   useEffect(() => {
-    if (repoFilter === 'all') return;
-    if (!repoOptions.includes(repoFilter)) {
-      setRepoFilter('all');
-    }
-  }, [repoFilter, repoOptions]);
+    setRepoFilters((prev) => {
+      const next = prev.filter((r) => repoOptions.includes(r));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [repoOptions]);
+
+  function toggleRepoFilter(repoKey: string) {
+    setRepoFilters((prev) =>
+      prev.includes(repoKey) ? prev.filter((r) => r !== repoKey) : [...prev, repoKey],
+    );
+  }
 
   const issueTitleByKey = useMemo(() => {
     const map: Record<string, string> = {};
@@ -113,20 +174,16 @@ export function Code() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return links.filter((l) => {
-      // When the user types into search, go global: ignore Active/All and
-      // the Type filter so they can find any link in the space.
-      if (!searchActive) {
-        if (viewMode === 'active') {
-          if (l.kind !== 'pull_request') return false;
-          const s = (l.state ?? '').toLowerCase();
-          if (s && !ACTIVE_PR_STATES.has(s)) return false;
-        } else if (kindFilter !== 'all' && l.kind !== kindFilter) {
-          return false;
-        }
+      // Code page is PR-only. Branch/commit/other Development links stay on the issue;
+      // whole-repo URLs sync into Connected repositories.
+      if (l.kind !== 'pull_request') return false;
+      if (viewMode === 'active') {
+        const s = (l.state ?? '').toLowerCase();
+        if (s && !ACTIVE_PR_STATES.has(s)) return false;
       }
-      if (repoFilter !== 'all') {
+      if (repoFilters.length > 0) {
         const rf = l.owner && l.repo ? `${l.owner}/${l.repo}` : '';
-        if (rf !== repoFilter) return false;
+        if (!repoFilters.includes(rf)) return false;
       }
       if (!q) return true;
       return (
@@ -137,13 +194,12 @@ export function Code() {
         (l.repo ?? '').toLowerCase().includes(q)
       );
     });
-  }, [links, viewMode, kindFilter, repoFilter, search, searchActive]);
+  }, [links, viewMode, repoFilters, search]);
 
   const groups = useMemo(() => {
-    const byKind: Record<CodeLinkKind, IssueCodeLinkDto[]> = {
-      pull_request: [], commit: [], branch: [], repo: [], other: [],
+    const byKind: Record<'pull_request', IssueCodeLinkDto[]> = {
+      pull_request: [...filtered],
     };
-    filtered.forEach((l) => { byKind[l.kind].push(l); });
     const activityMs = (l: IssueCodeLinkDto) => {
       const raw = l.lastActivityAt ?? l.createdAt;
       if (!raw) return 0;
@@ -194,12 +250,17 @@ export function Code() {
       setBulkImportToken('');
       loadRepos();
       if (res.discovered === 0) {
-        setBanner('No repositories returned for that account (may need a GitHub token for private repos).');
+        setBanner(
+          tokenTrim
+            ? 'No owned repositories visible with that PAT. Check repo read access (classic: repo scope; fine-grained: select the private repos).'
+            : 'No public repositories found for that account. Add a PAT to include private owned repos.',
+        );
       } else {
         setBanner(
           `Imported ${res.added} repo${res.added === 1 ? '' : 's'} from GitHub`
             + (res.skipped > 0 ? ` (${res.skipped} already connected)` : '')
-            + ` — ${res.discovered} visible in total.`,
+            + ` — ${res.discovered} owned repo${res.discovered === 1 ? '' : 's'} visible`
+            + (tokenTrim ? '; PAT saved on this space for Scan/Refresh.' : '.'),
         );
       }
     } catch (err) {
@@ -248,10 +309,10 @@ export function Code() {
       const result = await codeLinkApi.refreshSpace(spaceDbId);
       setBanner(
         result.checked === 0
-          ? 'No code links in this space yet.'
+          ? 'No pull requests linked to issues in this space yet.'
           : result.updated > 0
-            ? `Refreshed ${result.checked} link${result.checked === 1 ? '' : 's'} — ${result.updated} updated from GitHub.`
-            : `Checked ${result.checked} link${result.checked === 1 ? '' : 's'} — no metadata changes (bulk-import with a PAT in Repositories to store one for this space, or set server GITHUB_TOKEN).`,
+            ? `Checked ${result.checked} linked item${result.checked === 1 ? '' : 's'} — ${result.updated} updated from GitHub.`
+            : `Checked ${result.checked} linked item${result.checked === 1 ? '' : 's'} — titles and statuses already match GitHub.`,
       );
       loadLinks();
       if (result.updated > 0) refreshData();
@@ -264,12 +325,39 @@ export function Code() {
 
   return (
     <div className="code-page">
+      {selectedTicket && (
+        <TicketDetailModal
+          ticket={selectedTicket}
+          allTickets={tickets}
+          sprints={sprints}
+          onUpdate={updateTicket}
+          onCreateSubtask={createSubtask}
+          onDeleteTicket={deleteTicket}
+          onAddComment={addComment}
+          onEditComment={editComment}
+          onDeleteComment={deleteComment}
+          onAddIssueLink={addIssueLink}
+          onDeleteIssueLink={deleteIssueLink}
+          onAddCodeLink={async (issueDbId, url) => {
+            await addCodeLink(issueDbId, url);
+            loadLinks();
+          }}
+          onDeleteCodeLink={async (issueDbId, linkId) => {
+            await deleteCodeLink(issueDbId, linkId);
+            loadLinks();
+          }}
+          onRefreshCodeLinks={refreshCodeLinks}
+          currentUserId={Number(currentUser.id)}
+          onOpenTicket={(id) => openTicket(id)}
+          onClose={closeTicket}
+        />
+      )}
       <div className="code-header-block">
         <div className="code-header">
           <div>
             <h2 className="code-title">Code</h2>
             <p className="code-subtitle">
-              Pull requests and commits linked to issues in this space.
+              Pull requests linked to issues in this space.
             </p>
           </div>
           <div className="code-header-actions">
@@ -284,40 +372,70 @@ export function Code() {
             </button>
             <button
               type="button"
-              className="code-btn code-btn--ghost"
-              onClick={refreshAll}
-              disabled={refreshing || loading}
-              title="Re-fetch title and PR status from GitHub for every Development link in this space (needs API access to private repos)."
-            >
-              {refreshing ? 'Refreshing…' : '↻ Refresh all'}
-            </button>
-            <button
-              type="button"
               className="code-btn code-btn--primary"
               onClick={runScan}
               disabled={scanning || repos.length === 0}
-              title="Read recent PRs/commits in connected repos and create new issue links when titles/messages mention an issue key."
+              title="Read recent PRs in connected repos and link them to issues when titles/bodies mention an issue key."
             >
               {scanning ? 'Scanning…' : '⟳ Scan repos'}
             </button>
+            <button
+              type="button"
+              className="code-btn code-btn--ghost"
+              onClick={refreshAll}
+              disabled={refreshing || loading}
+              title="Re-fetch title and PR status from GitHub for linked pull requests in this space."
+            >
+              {refreshing ? 'Refreshing…' : '↻ Refresh all'}
+            </button>
           </div>
         </div>
-        <p className="code-header-hint">
-          <strong>Scan repos</strong> discovers <em>new</em> links by scanning connected repositories for issue keys (e.g. P1-11) in PR titles and commit messages — it does not change existing links.
-          {' '}
-          <strong>Refresh all</strong> updates titles and PR open/merged/closed state for links you already have.
-          For <strong>private</strong> repos, use <strong>Repositories → Import all repos</strong> with a PAT (it is saved on this space for Scan/Refresh), or set <code>GITHUB_TOKEN</code> on the server.
-        </p>
+        <div className="code-header-hint">
+          <p>
+            <strong>1. Repositories</strong> — connect the GitHub repos this space should watch.
+            {' '}Public repos can be added by URL alone (no token needed for public API access).
+            {' '}For <strong>private</strong> repos, open <strong>Repositories → Import all repos</strong> and paste a PAT
+            (saved on this space for Scan/Refresh), or set <code>GITHUB_TOKEN</code> on the server.
+          </p>
+          <p>
+            <strong>2. Scan repos</strong> — finds <em>new</em> pull requests in connected repositories whose title or
+            description mentions an issue key (e.g. P1-11), and links them to that issue. Does not change existing links.
+          </p>
+          <p>
+            <strong>3. Refresh all</strong> — re-checks titles and open/merged/closed status on GitHub for
+            pull requests already linked to issues. Does not discover new ones.
+          </p>
+        </div>
       </div>
 
-      {banner && <div className="code-banner">{banner}</div>}
+      {banner && <div className="code-banner code-banner--error">{banner}</div>}
       {scanResult && (
         <div className="code-banner code-banner--success">
           <div className="code-scan-summary">
-            Scan complete — inspected <strong>{scanResult.prsInspected}</strong> PRs and
-            {' '}<strong>{scanResult.commitsInspected}</strong> commits across
-            {' '}<strong>{scanResult.reposScanned}</strong> repo{scanResult.reposScanned === 1 ? '' : 's'},
-            {' '}created <strong>{scanResult.linksCreated}</strong> new link{scanResult.linksCreated === 1 ? '' : 's'}.
+            {(() => {
+              const open = scanResult.openPrs;
+              const closed = scanResult.closedPrs;
+              const hasSplit = typeof open === 'number' && typeof closed === 'number';
+              const total = hasSplit ? open + closed : (scanResult.prsInspected ?? 0);
+              return (
+                <>
+                  Scan complete — inspected{' '}
+                  {hasSplit ? (
+                    <>
+                      <strong>{open}</strong> open and <strong>{closed}</strong> closed PR{total === 1 ? '' : 's'}
+                    </>
+                  ) : (
+                    <>
+                      <strong>{total}</strong> PR{total === 1 ? '' : 's'}
+                    </>
+                  )}
+                  {' '}across <strong>{scanResult.reposScanned}</strong> repo{scanResult.reposScanned === 1 ? '' : 's'}.
+                  {scanResult.linksCreated > 0 && (
+                    <> <strong>{scanResult.linksCreated}</strong> PR{scanResult.linksCreated === 1 ? ' was' : 's were'} linked to issues — see the list below.</>
+                  )}
+                </>
+              );
+            })()}
             {(scanResult.reposRemoved ?? 0) > 0 && (
               <>
                 {' '}
@@ -330,24 +448,25 @@ export function Code() {
             <div className="code-scan-breakdown">
               <div className="code-scan-breakdown-head">
                 <span>Repository</span>
-                <span>PRs</span>
-                <span>Commits</span>
-                <span>New links</span>
+                <span>Open</span>
+                <span>Closed</span>
                 <span>Status</span>
               </div>
-              {scanResult.perRepo.map((s) => (
-                <div key={s.repoId} className={`code-scan-breakdown-row ${s.warning ? 'has-warning' : ''}`}>
-                  <span className="code-scan-repo">{s.owner}/{s.repo}</span>
-                  <span>{s.prsInspected}</span>
-                  <span>{s.commitsInspected}</span>
-                  <span className={s.linksCreated > 0 ? 'code-scan-created' : ''}>
-                    {s.linksCreated > 0 ? `+${s.linksCreated}` : 0}
-                  </span>
-                  <span className="code-scan-status">
-                    {s.warning ? <span className="code-scan-warning" title={s.warning}>⚠ error</span> : 'OK'}
-                  </span>
-                </div>
-              ))}
+              {scanResult.perRepo.map((s) => {
+                const hasSplit = typeof s.openPrs === 'number' && typeof s.closedPrs === 'number';
+                return (
+                  <div key={s.repoId} className={`code-scan-breakdown-row ${s.warning ? 'has-warning' : ''}`}>
+                    <span className="code-scan-repo">{s.owner}/{s.repo}</span>
+                    <span title={hasSplit ? undefined : `Total inspected: ${s.prsInspected ?? 0} (restart backend for open/closed split)`}>
+                      {hasSplit ? s.openPrs : (s.prsInspected ?? 0)}
+                    </span>
+                    <span>{hasSplit ? s.closedPrs : '—'}</span>
+                    <span className="code-scan-status">
+                      {s.warning ? <span className="code-scan-warning" title={s.warning}>⚠ error</span> : 'OK'}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
           {scanResult.warnings.length > 0 && (
@@ -383,48 +502,74 @@ export function Code() {
         <input
           className="code-search"
           type="search"
-          placeholder="Search PRs, commits, repos, issues…"
+          placeholder="Search linked PRs or issue keys…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {viewMode === 'all' && (
-          <select className="code-select" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)}>
-            <option value="all">All types</option>
-            <option value="pull_request">Pull requests</option>
-            <option value="commit">Commits</option>
-            <option value="branch">Branches</option>
-            <option value="repo">Repos</option>
-            <option value="other">Other</option>
-          </select>
-        )}
-        <select className="code-select" value={repoFilter} onChange={(e) => setRepoFilter(e.target.value)}>
-          <option value="all">All repos</option>
-          {repoOptions.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
+        <div className="code-repo-filter" ref={repoMenuRef}>
+          <button
+            type="button"
+            className={`code-select code-repo-filter__trigger${repoFilters.length > 0 ? ' is-active' : ''}`}
+            aria-expanded={repoMenuOpen}
+            aria-haspopup="listbox"
+            onClick={() => setRepoMenuOpen((o) => !o)}
+          >
+            {repoFilters.length === 0 ? 'All repos' : `Repos · ${repoFilters.length}`}
+            <span className="code-repo-filter__chev" aria-hidden>▾</span>
+          </button>
+          {repoMenuOpen && (
+            <div className="code-repo-filter__menu" role="listbox" aria-multiselectable aria-label="Filter by repository">
+              {repoOptions.length === 0 ? (
+                <p className="code-repo-filter__empty">No connected repos</p>
+              ) : (
+                <>
+                  {repoFilters.length > 0 && (
+                    <button
+                      type="button"
+                      className="code-repo-filter__clear"
+                      onClick={() => setRepoFilters([])}
+                    >
+                      Clear ({repoFilters.length})
+                    </button>
+                  )}
+                  {repoOptions.map((r) => {
+                    const checked = repoFilters.includes(r);
+                    return (
+                      <label key={r} className={`code-repo-filter__row${checked ? ' is-checked' : ''}`}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleRepoFilter(r)} />
+                        <span className="code-repo-filter__name" title={r}>{r}</span>
+                      </label>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          )}
+        </div>
         <span className="code-count">
           {searchActive
-            ? `${totalCount} match${totalCount === 1 ? '' : 'es'} in ${links.length}`
-            : `${totalCount} ${totalCount === 1 ? 'link' : 'links'}`}
+            ? `${totalCount} match${totalCount === 1 ? '' : 'es'}`
+            : `${totalCount} ${totalCount === 1 ? 'item' : 'items'}`}
         </span>
       </div>
 
-      {searchActive ? (
+      {viewMode === 'active' ? (
         <p className="code-view-hint">
-          Searching across <strong>all</strong> links in this space (ignoring Active / All and Type filters).
-        </p>
-      ) : viewMode === 'active' ? (
-        <p className="code-view-hint">
-          <strong>Active</strong> = open / draft pull requests only. Switch to <strong>All</strong> for merged / closed PRs and commits.
+          Showing open and draft PRs. Choose <strong>All</strong> to include merged and closed ones.
         </p>
       ) : null}
 
       {!loading && totalCount === 0 && (
         <div className="code-empty">
-          <h3>{viewMode === 'active' ? 'No active PRs' : 'No code linked yet'}</h3>
+          <h3>
+            {viewMode === 'active'
+              ? 'No open PRs linked to issues'
+              : 'No PRs linked to issues'}
+          </h3>
           <p>
             {viewMode === 'active'
-              ? <>No open or draft pull requests linked to any issue. Switch to <strong>All</strong> to see history, or run <strong>Scan repos</strong> to pull in new links.</>
-              : <>Either paste a GitHub URL into any issue's <strong>Development</strong> section, or open <strong>⚙ Repositories</strong> to connect a repo and run <strong>Scan repos</strong>.</>
+              ? <>No open or draft pull requests are linked to an issue yet. Switch to <strong>All</strong> for merged/closed, or run <strong>Scan repos</strong>.</>
+              : <>Connect repos under <strong>⚙ Repositories</strong>, then run <strong>Scan repos</strong> to find PRs whose title mentions an issue key. You can also paste a PR URL in an issue’s <strong>Development</strong> section.</>
             }
           </p>
         </div>
@@ -434,8 +579,6 @@ export function Code() {
         const items = groups[kind];
         if (!items || items.length === 0) return null;
         const meta = KIND_META[kind];
-        const isCommits = kind === 'commit';
-        const collapsed = isCommits && !commitsExpanded;
         const limit = groupLimits[kind];
         const visibleItems = items.slice(0, limit);
         const remaining = items.length - visibleItems.length;
@@ -445,79 +588,65 @@ export function Code() {
               <span className={`code-group-icon code-group-icon--${kind}`}>{meta.icon}</span>
               {meta.label}
               <span className="code-group-count">{items.length}</span>
-              {isCommits && (
+            </h3>
+            <div className="code-list">
+              {visibleItems.map((l) => {
+                const subtitle = [
+                  l.owner && l.repo ? `${l.owner}/${l.repo}` : null,
+                  l.refId ? `#${l.refId}` : null,
+                ].filter(Boolean).join(' · ');
+                return (
+                  <div key={l.id} className="code-row">
+                    <span className={`code-row-icon code-row-icon--${l.kind}`}>{meta.icon}</span>
+                    <div className="code-row-body">
+                      <a
+                        className="code-row-title"
+                        href={l.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {l.title || l.url}
+                      </a>
+                      <div className="code-row-sub">
+                        <span className="code-row-badge">{meta.badge}</span>
+                        {subtitle && <span>{subtitle}</span>}
+                        {l.authorLogin && <span>by {l.authorLogin}</span>}
+                        {l.state && (
+                          <span className={`code-row-state code-row-state--${l.state.toLowerCase()}`}>{l.state}</span>
+                        )}
+                        {(() => {
+                          const rel = formatRelativeAgo(l.lastActivityAt ?? l.createdAt);
+                          return rel ? <span className="code-row-time" title={l.lastActivityAt ?? l.createdAt}>{rel}</span> : null;
+                        })()}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="code-row-issue"
+                      onClick={() => openTicket(l.issueKey)}
+                      title={issueTitleByKey[l.issueKey] ?? l.issueKey}
+                    >
+                      {l.issueKey}
+                    </button>
+                  </div>
+                );
+              })}
+              {remaining > 0 && (
                 <button
                   type="button"
-                  className="code-group-toggle"
-                  onClick={() => setCommitsExpanded((v) => !v)}
-                  title={collapsed ? 'Show commits' : 'Hide commits'}
+                  className="code-show-more"
+                  onClick={() =>
+                    setGroupLimits((prev) => ({
+                      ...prev,
+                      [kind]: prev[kind] + PAGE_SIZE,
+                    }))
+                  }
                 >
-                  {collapsed ? 'Show' : 'Hide'}
+                  Show {Math.min(PAGE_SIZE, remaining)} more
+                  <span className="code-show-more-meta"> · {remaining} remaining</span>
                 </button>
               )}
-            </h3>
-            {!collapsed && (
-              <div className="code-list">
-                {visibleItems.map((l) => {
-                  const subtitle = [
-                    l.owner && l.repo ? `${l.owner}/${l.repo}` : null,
-                    l.kind === 'pull_request' && l.refId ? `#${l.refId}` : null,
-                    l.kind === 'commit' && l.refId ? l.refId.substring(0, 7) : null,
-                    l.kind === 'branch' && l.refId ? l.refId : null,
-                  ].filter(Boolean).join(' · ');
-                  return (
-                    <div key={l.id} className="code-row">
-                      <span className={`code-row-icon code-row-icon--${l.kind}`}>{meta.icon}</span>
-                      <div className="code-row-body">
-                        <a
-                          className="code-row-title"
-                          href={l.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {l.title || l.url}
-                        </a>
-                        <div className="code-row-sub">
-                          <span className="code-row-badge">{meta.badge}</span>
-                          {subtitle && <span>{subtitle}</span>}
-                          {l.authorLogin && <span>by {l.authorLogin}</span>}
-                          {l.state && (
-                            <span className={`code-row-state code-row-state--${l.state.toLowerCase()}`}>{l.state}</span>
-                          )}
-                          {(() => {
-                            const rel = formatRelativeAgo(l.lastActivityAt ?? l.createdAt);
-                            return rel ? <span className="code-row-time" title={l.lastActivityAt ?? l.createdAt}>{rel}</span> : null;
-                          })()}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="code-row-issue"
-                        onClick={() => navigate(`/ticket/${l.issueKey}`)}
-                        title={issueTitleByKey[l.issueKey] ?? l.issueKey}
-                      >
-                        {l.issueKey}
-                      </button>
-                    </div>
-                  );
-                })}
-                {remaining > 0 && (
-                  <button
-                    type="button"
-                    className="code-show-more"
-                    onClick={() =>
-                      setGroupLimits((prev) => ({
-                        ...prev,
-                        [kind]: prev[kind] + PAGE_SIZE,
-                      }))
-                    }
-                  >
-                    Show {Math.min(PAGE_SIZE, remaining)} more
-                    <span className="code-show-more-meta"> · {remaining} remaining</span>
-                  </button>
-                )}
-              </div>
-            )}
+            </div>
           </div>
         );
       })}
@@ -539,20 +668,24 @@ export function Code() {
             </div>
             <div className="code-modal-body">
               <div className="code-repo-hint">
-                <p className="code-repo-hint-title">How import works</p>
+                <p className="code-repo-hint-title">How this works</p>
                 <ul className="code-repo-hint-list">
                   <li>
-                    Import links repos for this space and scan detects references like{' '}
-                    <code>{currentSpace.key ? `${currentSpace.key}-123` : 'PROJ-123'}</code> in PR titles / commit messages.
+                    <strong>Import all</strong> adds every repository owned by the GitHub username or organization you enter
+                    (e.g. <code>octocat</code>).
                   </li>
                   <li>
-                    Public repos work without a token. Private repos need a PAT (<code>repo</code> classic, or fine-grained read access).
+                    Repos you only collaborate on under someone else’s account are <strong>not</strong> included —
+                    use <strong>Add one repo</strong> for those.
                   </li>
                   <li>
-                    If you provide a PAT, it is stored on this space (not returned by API) for <strong>Scan repos</strong>, <strong>Refresh all</strong>, and Development metadata.
+                    <strong>Public</strong> owned repos: no token needed.
+                    {' '}<strong>Private</strong> owned repos: paste a Personal Access Token (PAT) for that same account
+                    (classic token with <code>repo</code> scope, or a fine-grained token with repository read).
                   </li>
                   <li>
-                    Import includes repos <strong>owned by the account</strong>; collaborator repos from other owners are excluded.
+                    A PAT you paste is saved on this space (never shown again in the UI) and reused later by
+                    {' '}<strong>Scan repos</strong> and <strong>Refresh all</strong> on the Code page.
                   </li>
                 </ul>
               </div>
@@ -561,16 +694,18 @@ export function Code() {
                   <input
                     className="code-search"
                     type="text"
-                    placeholder="User, org, or profile URL (e.g. vercel or https://github.com/octocat)"
+                    placeholder="Username or org — e.g. octocat"
+                    title="The name in https://github.com/NAME — a username or organization, not a repo path"
                     value={accountInput}
                     onChange={(e) => setAccountInput(e.target.value)}
-                    aria-label="GitHub account for bulk import"
+                    aria-label="GitHub username or organization for bulk import"
                   />
                   <input
                     className="code-search"
                     type="password"
                     autoComplete="off"
-                    placeholder="Optional: GitHub token (needed for private repos)"
+                    placeholder="PAT — only needed for private repos"
+                    title="Must belong to the username/org above. Classic: repo scope. Fine-grained: repository read on the private repos."
                     value={bulkImportToken}
                     onChange={(e) => setBulkImportToken(e.target.value)}
                     aria-label="Optional GitHub personal access token for bulk import"
@@ -582,13 +717,16 @@ export function Code() {
               </form>
               {accountError && <p className="code-repo-error">{accountError}</p>}
               <p className="code-repo-subhint">
-                Adds repositories owned by that account (skips ones already linked). Collaborator repos owned by other accounts are excluded. With a PAT, it is saved on this space for later scans; leave it empty for public-only imports.
+                Adds repos owned by that username/org (skips ones already in the list). Not a repo path like{' '}
+                <code>octocat/Hello-World</code> — just the account name.
+                Leave the PAT empty for public-only. With a PAT for that same account, private owned repos are included and the token is saved for Scan/Refresh.
               </p>
               <form className="code-repo-form code-repo-form--single" onSubmit={addRepo}>
                 <input
                   className="code-search"
                   type="text"
-                  placeholder="Single repo: owner/repo  (e.g. facebook/react)  or a GitHub URL"
+                  placeholder="owner/repo — e.g. michael23fire/my-repo"
+                  title="One repository: owner/repo or a full GitHub URL"
                   value={repoInput}
                   onChange={(e) => setRepoInput(e.target.value)}
                 />

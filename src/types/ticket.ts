@@ -10,6 +10,23 @@ export const ISSUE_TYPE_META: Record<IssueType, { label: string; icon: string; c
 
 export type TicketStatus = 'planned' | 'in_progress' | 'blocked' | 'in_review' | 'done';
 
+/** Epics track outcome-level progress with a deliberately simpler workflow. */
+export const EPIC_STATUS_OPTIONS: ReadonlyArray<{ value: TicketStatus; label: string }> = [
+  { value: 'planned', label: 'Planned' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'done', label: 'Done' },
+];
+
+export function normalizeStatusForIssueType(
+  issueType: IssueType | undefined,
+  status: TicketStatus,
+): TicketStatus {
+  if (issueType === 'epic' && (status === 'blocked' || status === 'in_review')) {
+    return 'in_progress';
+  }
+  return status;
+}
+
 export type TicketPriority = 'highest' | 'high' | 'medium' | 'low' | 'lowest';
 
 export const PRIORITY_META: Record<TicketPriority, { label: string; color: string; icon: string }> = {
@@ -23,11 +40,8 @@ export const PRIORITY_META: Record<TicketPriority, { label: string; color: strin
 export const ALL_PRIORITIES = Object.keys(PRIORITY_META) as TicketPriority[];
 
 export type TicketLabel =
-  | 'Bug'
   | 'Feature'
   | 'Improvement'
-  | 'Story'
-  | 'Epic'
   | 'Design'
   | 'Frontend'
   | 'Backend'
@@ -38,11 +52,8 @@ export type TicketLabel =
   | 'Performance';
 
 export const LABEL_COLORS: Record<TicketLabel, { bg: string; text: string }> = {
-  Bug:           { bg: '#fee2e2', text: '#dc2626' },
   Feature:       { bg: '#dbeafe', text: '#2563eb' },
   Improvement:   { bg: '#dcfce7', text: '#16a34a' },
-  Story:         { bg: '#ede9fe', text: '#7c3aed' },
-  Epic:          { bg: '#e0e7ff', text: '#4338ca' },
   Design:        { bg: '#fce7f3', text: '#db2777' },
   Frontend:      { bg: '#cffafe', text: '#0e7490' },
   Backend:       { bg: '#ffedd5', text: '#c2410c' },
@@ -54,6 +65,18 @@ export const LABEL_COLORS: Record<TicketLabel, { bg: string; text: string }> = {
 };
 
 export const ALL_LABELS = Object.keys(LABEL_COLORS) as TicketLabel[];
+
+/** Issue types are structural metadata, not labels; strip legacy type-like labels everywhere. */
+export function labelsForIssueType(
+  _issueType: IssueType | undefined,
+  labels: readonly string[] | undefined,
+): TicketLabel[] {
+  const reservedTypeLabels = new Set(['Bug', 'Story', 'Epic']);
+  return (labels ?? []).filter((label): label is TicketLabel => !reservedTypeLabels.has(label));
+}
+
+/** Reserved API label used to persist Jira-style issue flags without exposing it as a normal label. */
+export const FLAGGED_API_LABEL = 'Flagged';
 
 export interface Comment {
   id: string;
@@ -106,6 +129,8 @@ export interface Ticket {
   dbId?: number;
   /** ISO — from API for status lifecycle */
   createdAt?: string;
+  /** ISO — from API last update time */
+  updatedAt?: string;
   title: string;
   issueType?: IssueType;
   description?: string;
@@ -122,9 +147,13 @@ export interface Ticket {
   sprint?: string;
   priority?: TicketPriority;
   labels?: TicketLabel[];
+  /** Marks work that needs attention without changing its workflow status. */
+  flagged?: boolean;
   parentId?: string;
   subtaskIds?: string[];
   sprintId?: string;
+  /** Backlog / sprint rank (lower = higher in the list). */
+  issueOrder?: number;
   comments?: Comment[];
   linkedIssues?: LinkedIssueItem[];
   attachments?: TicketAttachment[];
