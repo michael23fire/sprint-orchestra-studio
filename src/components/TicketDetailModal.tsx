@@ -567,6 +567,46 @@ export function TicketDetailModal({
     [historyItems],
   );
 
+  /**
+   * Pair comment_created history rows with the matching Comment so All/History can show
+   * the body under “added a comment” without duplicating a separate comment card.
+   */
+  const commentsByHistoryId = useMemo(() => {
+    const comments = draft.comments ?? [];
+    const used = new Set<string>();
+    const map = new Map<number, Comment>();
+    const createdEvents = displayedHistoryItems
+      .filter((h) => h.eventType === 'comment_created')
+      .slice()
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    for (const h of createdEvents) {
+      const ht = new Date(h.createdAt).getTime();
+      let best: Comment | undefined;
+      let bestDelta = Number.POSITIVE_INFINITY;
+      for (const c of comments) {
+        if (used.has(c.id)) continue;
+        if (h.actorId != null && c.authorId != null && h.actorId !== c.authorId) continue;
+        const delta = Math.abs(new Date(c.createdAt).getTime() - ht);
+        if (delta < bestDelta && delta <= 15_000) {
+          best = c;
+          bestDelta = delta;
+        }
+      }
+      if (best) {
+        used.add(best.id);
+        map.set(h.id, best);
+      }
+    }
+    return map;
+  }, [displayedHistoryItems, draft.comments]);
+
+  const commentsForActivityList = useMemo(() => {
+    // Comments tab: full list. All: never show standalone comment cards — those belong
+    // under the matching “added a comment” history row (avoids the duplicate flash).
+    if (activityTab !== 'comments') return [];
+    return draft.comments ?? [];
+  }, [activityTab, draft.comments]);
+
   useEffect(() => {
     if (activityTab !== 'worklog' && activityTab !== 'all') setLifecycleBarTip(null);
   }, [activityTab]);
@@ -581,7 +621,8 @@ export function TicketDetailModal({
       .then((items) => { if (!cancelled) setAttachments(items.map(mapAttachmentDto)); })
       .catch(() => { if (!cancelled) setAttachments([]); });
     return () => { cancelled = true; };
-  }, [ticket.dbId, ticket.id, ticket.status, ticket.createdAt]);
+    // Re-fetch history when comments change so “added a comment” rows stay in sync on All.
+  }, [ticket.dbId, ticket.id, ticket.status, ticket.createdAt, ticket.comments]);
 
   useEffect(() => {
     if (!ticket.dbId) return;
@@ -939,13 +980,36 @@ export function TicketDetailModal({
       return;
     }
     if (!stripHtml(composedContent).trim() && !htmlHasAttachmentMarkers(composedContent)) return;
+    const now = new Date().toISOString();
+    const authorName = (
+      currentUserId != null
+        ? USERS.find((u) => Number(u.id) === currentUserId)?.name
+        : undefined
+    ) ?? 'You';
     const comment: Comment = {
       id: `c-${Date.now()}`,
-      author: 'You',
+      authorId: currentUserId,
+      author: authorName,
       content: composedContent,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     };
     patch('comments', [...(draft.comments ?? []), comment]);
+    // Optimistic history so All/History show “added a comment” + body immediately.
+    setHistoryItems((prev) => [
+      {
+        id: -Date.now(),
+        issueId: ticket.dbId!,
+        actorId: currentUserId ?? null,
+        actorName: authorName,
+        eventType: 'comment_created',
+        fieldName: null,
+        fromValue: null,
+        toValue: null,
+        description: 'added a comment',
+        createdAt: now,
+      },
+      ...prev,
+    ]);
     if (onAddComment && currentUserId != null) {
       onAddComment(ticket.dbId, currentUserId, composedContent);
     }
@@ -2401,13 +2465,13 @@ export function TicketDetailModal({
               )}
                 </>
               )}
-              {(activityTab === 'comments' || activityTab === 'all') && (
+              {activityTab === 'comments' && (
                 <>
               <div className="ticket-detail__comments">
-                {(draft.comments ?? []).length === 0 && (
+                {commentsForActivityList.length === 0 && (
                   <p className="ticket-detail__no-comments">No comments yet.</p>
                 )}
-                {(draft.comments ?? []).slice().reverse().map((c) => (
+                {commentsForActivityList.slice().reverse().map((c) => (
                   <div key={c.id} className="ticket-detail__comment">
                     <div className="ticket-detail__avatar">{c.author.charAt(0).toUpperCase()}</div>
                     <div className="ticket-detail__comment-body">
@@ -2514,7 +2578,11 @@ export function TicketDetailModal({
               {(activityTab === 'history' || activityTab === 'all') && (
                 <div className="ticket-detail__history">
                   {displayedHistoryItems.length === 0 && <p className="ticket-detail__no-comments">No history yet.</p>}
-                  {displayedHistoryItems.map((h) => (
+                  {displayedHistoryItems.map((h) => {
+                    const linkedComment = h.eventType === 'comment_created'
+                      ? commentsByHistoryId.get(h.id)
+                      : undefined;
+                    return (
                     <div key={h.id} className="ticket-detail__history-row">
                       <div className="ticket-detail__avatar ticket-detail__avatar--history">
                         {actorInitials(h.actorName)}
@@ -2531,9 +2599,38 @@ export function TicketDetailModal({
                             </p>
                           ) : null}
                         </div>
+                        {linkedComment ? (
+                          /<\/?[a-z][\s\S]*>/i.test(linkedComment.content)
+                            ? <div
+                                className="ticket-detail__history-comment ticket-detail__comment-rich-content"
+                                dangerouslySetInnerHTML={{ __html: hydrateCommentHtml(linkedComment.content) }}
+                                onClick={(e) => {
+                                  const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+                                  if (anchor) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    window.open(anchor.href, '_blank', 'noopener,noreferrer');
+                                    return;
+                                  }
+                                  const el = (e.target as HTMLElement).closest('[data-attachment-id],[data-attachment-name]') as HTMLElement | null;
+                                  if (!el) return;
+                                  const idAttr = el.getAttribute('data-attachment-id');
+                                  const nameAttr = el.getAttribute('data-attachment-name');
+                                  const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
+                                  if (!attachment) return;
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  openAttachmentPreview(attachment);
+                                }}
+                              />
+                            : <div className="ticket-detail__history-comment">
+                                {renderCommentWithAttachments(linkedComment.content)}
+                              </div>
+                        ) : null}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {(activityTab === 'worklog' || activityTab === 'all') && (
