@@ -25,20 +25,23 @@ const STATUS_COLORS: Record<TicketStatus, string> = {
 
 const EPIC_PROGRESS_STATUSES: TicketStatus[] = ['planned', 'in_progress', 'done'];
 
-const PRIORITY_ORDER: TicketPriority[] = ['highest', 'high', 'medium', 'low', 'lowest'];
-const PRIORITY_COLORS: Record<TicketPriority, string> = {
+type PriorityChartKey = TicketPriority | 'none';
+const PRIORITY_ORDER: PriorityChartKey[] = ['highest', 'high', 'medium', 'low', 'lowest', 'none'];
+const PRIORITY_COLORS: Record<PriorityChartKey, string> = {
   highest: '#dc2626',
   high: '#f97316',
   medium: '#eab308',
   low: '#3b82f6',
   lowest: '#60a5fa',
+  none: '#94a3b8',
 };
-const PRIORITY_LABELS: Record<TicketPriority, string> = {
+const PRIORITY_LABELS: Record<PriorityChartKey, string> = {
   highest: 'Highest',
   high: 'High',
   medium: 'Medium',
   low: 'Low',
   lowest: 'Lowest',
+  none: 'None',
 };
 
 function percent(done: number, total: number): number {
@@ -169,8 +172,8 @@ export function Summary() {
     const base = PRIORITY_ORDER.map((p) => ({ key: p, count: 0 }));
     const idx = new Map(PRIORITY_ORDER.map((p, i) => [p, i]));
     tickets.forEach((t) => {
-      if (!t.priority) return;
-      const i = idx.get(t.priority);
+      const key: PriorityChartKey = t.priority ?? 'none';
+      const i = idx.get(key);
       if (i == null) return;
       base[i].count += 1;
     });
@@ -398,7 +401,7 @@ export function Summary() {
         </article>
         <article className="summary-card">
           <h3>Priority breakdown</h3>
-          <p className="summary-card__hint">Hover a column for “count / total”. Items without a priority do not add to any bar.</p>
+          <p className="summary-card__hint">Hover a column for “count / total”. “None” is issues without a priority.</p>
           <div className="summary-priority-chart">
             {priorityCounts.map((p) => {
               const barH = p.count > 0 ? (p.count / maxPriority) * 120 : 0;
