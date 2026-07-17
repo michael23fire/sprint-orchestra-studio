@@ -87,7 +87,7 @@ export function Code() {
   const [groupLimits, setGroupLimits] = useState<Record<'pull_request', number>>({
     pull_request: PAGE_SIZE,
   });
-  const [banner, setBanner] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{ text: string; tone: 'error' | 'success' | 'info' } | null>(null);
 
   const [repos, setRepos] = useState<SpaceGithubRepoDto[]>([]);
   const [repoInput, setRepoInput] = useState('');
@@ -108,7 +108,7 @@ export function Code() {
       .then((items) => setLinks(items))
       .catch((err) => {
         setLinks([]);
-        setBanner(err instanceof Error ? err.message : 'Failed to load code links');
+        setBanner({ text: err instanceof Error ? err.message : 'Failed to load code links', tone: 'error' });
       })
       .finally(() => setLoading(false));
   }, [spaceDbId]);
@@ -119,7 +119,7 @@ export function Code() {
       .then((items) => setRepos(items))
       .catch((err) => {
         setRepos([]);
-        setBanner(err instanceof Error ? err.message : 'Failed to load repositories');
+        setBanner({ text: err instanceof Error ? err.message : 'Failed to load repositories', tone: 'error' });
       });
   }, [spaceDbId]);
 
@@ -250,18 +250,21 @@ export function Code() {
       setBulkImportToken('');
       loadRepos();
       if (res.discovered === 0) {
-        setBanner(
-          tokenTrim
+        setBanner({
+          text: tokenTrim
             ? 'No owned repositories visible with that PAT. Check repo read access (classic: repo scope; fine-grained: select the private repos).'
             : 'No public repositories found for that account. Add a PAT to include private owned repos.',
-        );
+          tone: 'info',
+        });
       } else {
-        setBanner(
-          `Imported ${res.added} repo${res.added === 1 ? '' : 's'} from GitHub`
+        setBanner({
+          text:
+            `Imported ${res.added} repo${res.added === 1 ? '' : 's'} from GitHub`
             + (res.skipped > 0 ? ` (${res.skipped} already connected)` : '')
             + ` — ${res.discovered} owned repo${res.discovered === 1 ? '' : 's'} visible`
             + (tokenTrim ? '; PAT saved on this space for Scan/Refresh.' : '.'),
-        );
+          tone: 'success',
+        });
       }
     } catch (err) {
       setAccountError(err instanceof Error ? err.message : 'Bulk import failed');
@@ -279,7 +282,7 @@ export function Code() {
       loadLinks();
       refreshData();
     } catch (err) {
-      setBanner(err instanceof Error ? err.message : 'Failed to disconnect repo');
+      setBanner({ text: err instanceof Error ? err.message : 'Failed to disconnect repo', tone: 'error' });
     }
   }
 
@@ -295,7 +298,7 @@ export function Code() {
       loadRepos();
       if (result.linksCreated > 0 || (result.reposRemoved ?? 0) > 0) refreshData();
     } catch (err) {
-      setBanner(err instanceof Error ? err.message : 'Scan failed');
+      setBanner({ text: err instanceof Error ? err.message : 'Scan failed', tone: 'error' });
     } finally {
       setScanning(false);
     }
@@ -307,17 +310,19 @@ export function Code() {
     setRefreshing(true);
     try {
       const result = await codeLinkApi.refreshSpace(spaceDbId);
-      setBanner(
-        result.checked === 0
-          ? 'No pull requests linked to issues in this space yet.'
-          : result.updated > 0
-            ? `Checked ${result.checked} linked item${result.checked === 1 ? '' : 's'} — ${result.updated} updated from GitHub.`
-            : `Checked ${result.checked} linked item${result.checked === 1 ? '' : 's'} — titles and statuses already match GitHub.`,
-      );
+      setBanner({
+        text:
+          result.checked === 0
+            ? 'No pull requests linked to issues in this space yet.'
+            : result.updated > 0
+              ? `Checked ${result.checked} linked item${result.checked === 1 ? '' : 's'} — ${result.updated} updated from GitHub.`
+              : `Checked ${result.checked} linked item${result.checked === 1 ? '' : 's'} — titles and statuses already match GitHub.`,
+        tone: result.checked === 0 ? 'info' : 'success',
+      });
       loadLinks();
       if (result.updated > 0) refreshData();
     } catch (err) {
-      setBanner(err instanceof Error ? err.message : 'Refresh failed');
+      setBanner({ text: err instanceof Error ? err.message : 'Refresh failed', tone: 'error' });
     } finally {
       setRefreshing(false);
     }
@@ -408,7 +413,19 @@ export function Code() {
         </div>
       </div>
 
-      {banner && <div className="code-banner code-banner--error">{banner}</div>}
+      {banner && (
+        <div
+          className={
+            banner.tone === 'error'
+              ? 'code-banner code-banner--error'
+              : banner.tone === 'success'
+                ? 'code-banner code-banner--success'
+                : 'code-banner'
+          }
+        >
+          {banner.text}
+        </div>
+      )}
       {scanResult && (
         <div className="code-banner code-banner--success">
           <div className="code-scan-summary">
