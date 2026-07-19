@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Ticket, TicketStatus, TicketLabel, TicketPriority, IssueType, Comment } from '../types/ticket';
-import { ALL_LABELS, EPIC_STATUS_OPTIONS, LABEL_COLORS, ALL_PRIORITIES, PRIORITY_META, ISSUE_TYPE_META, labelsForIssueType, normalizeStatusForIssueType } from '../types/ticket';
+import { EPIC_STATUS_OPTIONS, labelColor, ALL_PRIORITIES, PRIORITY_META, ISSUE_TYPE_META, labelsForIssueType, normalizeStatusForIssueType, requiresSprintEstimate } from '../types/ticket';
 import type { Sprint } from '../types/sprint';
 import { USERS } from '../context/UserContext';
 import { useSpaces } from '../context/SpaceContext';
@@ -25,8 +25,8 @@ import { formatDueDateWithTime } from '../utils/dueDate';
 
 /** Zoom slider at 100% → this many × more pixels/ms than “fit to panel”. */
 const LIFECYCLE_BAR_ZOOM_MAX_MULT = 14;
-import { attachmentApi, historyApi } from '../api';
-import type { IssueAttachmentDto, IssueHistoryDto } from '../api';
+import { attachmentApi, historyApi, labelApi } from '../api';
+import type { IssueAttachmentDto, IssueHistoryDto, LabelDto } from '../api';
 import {
   createPendingAttachment,
   finalizeEditorHtmlWithUploads,
@@ -273,8 +273,24 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 /* ---- Labels multi-select ---- */
 function LabelSelect({ selected, onChange }: { selected: TicketLabel[]; onChange: (v: TicketLabel[]) => void }) {
+  const { currentSpace } = useSpaces();
   const [open, setOpen] = useState(false);
+  const [labels, setLabels] = useState<LabelDto[]>([]);
+  const [query, setQuery] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  const refresh = useCallback(() => {
+    const spaceId = Number(currentSpace.id);
+    if (!Number.isFinite(spaceId) || spaceId <= 0) return;
+    labelApi.getBySpace(spaceId)
+      .then(setLabels)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load labels'));
+  }, [currentSpace.id]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
     if (!open) return;
@@ -286,8 +302,50 @@ function LabelSelect({ selected, onChange }: { selected: TicketLabel[]; onChange
   }, [open]);
 
   function toggle(label: TicketLabel) {
-    onChange(selected.includes(label) ? selected.filter((l) => l !== label) : [...selected, label]);
+    const selectedMatch = selected.find((item) => item.toLocaleLowerCase() === label.toLocaleLowerCase());
+    onChange(selectedMatch ? selected.filter((item) => item !== selectedMatch) : [...selected, label]);
   }
+
+  async function createLabel() {
+    const name = query.trim();
+    if (!name) return;
+    const existing = labels.find((label) => label.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (existing) {
+      if (!selected.some((item) => item.toLocaleLowerCase() === existing.name.toLocaleLowerCase())) {
+        onChange([...selected, existing.name]);
+      }
+      setQuery('');
+      return;
+    }
+    try {
+      const created = await labelApi.create(Number(currentSpace.id), name);
+      setLabels((prev) => [...prev.filter((item) => item.id !== created.id), created]
+        .sort((a, b) => a.name.localeCompare(b.name)));
+      onChange([...selected, created.name]);
+      setQuery('');
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create label');
+    }
+  }
+
+  async function deleteLabel(label: LabelDto) {
+    if (!window.confirm(`Delete "${label.name}" from this space and all of its issues?`)) return;
+    try {
+      await labelApi.delete(Number(currentSpace.id), label.id);
+      setLabels((prev) => prev.filter((item) => item.id !== label.id));
+      onChange(selected.filter((item) => item.toLocaleLowerCase() !== label.name.toLocaleLowerCase()));
+      window.dispatchEvent(new Event('space-labels-changed'));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete label');
+    }
+  }
+
+  const filtered = labels.filter((label) =>
+    label.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const exactMatch = labels.some((label) =>
+    label.name.toLocaleLowerCase() === query.trim().toLocaleLowerCase());
 
   return (
     <div className="label-select" ref={ref}>
@@ -297,13 +355,13 @@ function LabelSelect({ selected, onChange }: { selected: TicketLabel[]; onChange
           <span
             key={l}
             className="label-chip label-chip--removable"
-            style={{ background: LABEL_COLORS[l].bg, color: LABEL_COLORS[l].text }}
+            style={{ background: labelColor(l).bg, color: labelColor(l).text }}
           >
             {l}
             <button
               type="button"
               className="label-chip__remove"
-              style={{ color: LABEL_COLORS[l].text }}
+              style={{ color: labelColor(l).text }}
               onMouseDown={(e) => { e.stopPropagation(); toggle(l); }}
               aria-label={`Remove ${l}`}
             >✕</button>
@@ -312,25 +370,57 @@ function LabelSelect({ selected, onChange }: { selected: TicketLabel[]; onChange
       </button>
       {open && (
         <div className="label-select__dropdown">
-          {ALL_LABELS.map((label) => {
-            const isSelected = selected.includes(label);
+          <div className="label-select__create">
+            <input
+              autoFocus
+              value={query}
+              maxLength={50}
+              placeholder="Find or create a label"
+              onChange={(event) => { setQuery(event.target.value); setError(null); }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void createLabel();
+                }
+              }}
+            />
+          </div>
+          {filtered.map((label) => {
+            const isSelected = selected.some((item) =>
+              item.toLocaleLowerCase() === label.name.toLocaleLowerCase());
             return (
-              <button
-                key={label}
-                type="button"
+              <div
+                key={label.id}
                 className={`label-select__option ${isSelected ? 'label-select__option--selected' : ''}`}
-                onClick={() => toggle(label)}
               >
-                <span className="label-select__check">{isSelected ? '✓' : ''}</span>
-                <span
-                  className="label-chip"
-                  style={{ background: LABEL_COLORS[label].bg, color: LABEL_COLORS[label].text }}
+                <button type="button" className="label-select__option-main" onClick={() => toggle(label.name)}>
+                  <span className="label-select__check">{isSelected ? '✓' : ''}</span>
+                  <span
+                    className="label-chip"
+                    style={{ background: labelColor(label.name).bg, color: labelColor(label.name).text }}
+                  >
+                    {label.name}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="label-select__delete"
+                  aria-label={`Delete ${label.name}`}
+                  title={`Delete ${label.name} from this space`}
+                  onClick={() => void deleteLabel(label)}
                 >
-                  {label}
-                </span>
-              </button>
+                  🗑
+                </button>
+              </div>
             );
           })}
+          {query.trim() && !exactMatch && (
+            <button type="button" className="label-select__create-action" onClick={() => void createLabel()}>
+              Create “{query.trim()}”
+            </button>
+          )}
+          {filtered.length === 0 && !query.trim() && <p className="label-select__empty">No labels in this space</p>}
+          {error && <p className="label-select__error">{error}</p>}
         </div>
       )}
     </div>
@@ -2992,6 +3082,14 @@ export function TicketDetailModal({
                     value={draft.sprintId ?? ''}
                     onChange={(e) => {
                       const id = e.target.value || undefined;
+                      if (
+                        id
+                        && draft.issueType !== 'subtask'
+                        && !(draft.storyPoints != null && draft.storyPoints > 0)
+                      ) {
+                        window.alert('Add story points before assigning this issue to a sprint.');
+                        return;
+                      }
                       const name = sprints.find((s) => s.id === id)?.name;
                       setDraft((prev) => ({ ...prev, sprintId: id, sprint: name }));
                     }}
@@ -3016,16 +3114,18 @@ export function TicketDetailModal({
               )}
             </DetailRow>
 
-            <DetailRow label="Story Points">
-              <input
-                className="ticket-detail__input"
-                type="number"
-                placeholder="—"
-                min={0}
-                value={draft.storyPoints ?? ''}
-                onChange={(e) => patch('storyPoints', e.target.value ? Number(e.target.value) : undefined)}
-              />
-            </DetailRow>
+            {requiresSprintEstimate(draft.issueType) && (
+              <DetailRow label="Story Points">
+                <input
+                  className="ticket-detail__input"
+                  type="number"
+                  placeholder="—"
+                  min={1}
+                  value={draft.storyPoints ?? ''}
+                  onChange={(e) => patch('storyPoints', e.target.value ? Number(e.target.value) : undefined)}
+                />
+              </DetailRow>
+            )}
 
             <DetailRow label="Start Date">
               <input

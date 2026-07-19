@@ -52,6 +52,7 @@ export function CreateTaskModal({
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState<TicketStatus>(initialStatus);
   const [assignee, setAssignee] = useState('');
+  const [storyPoints, setStoryPoints] = useState('');
   const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const titleRef = useRef<HTMLInputElement>(null);
@@ -78,6 +79,9 @@ export function CreateTaskModal({
     if (!title.trim()) return;
     const assigneeUser = assignee ? USERS.find((u) => u.name === assignee) : undefined;
     const assignToSprint = issueType !== 'epic' && Boolean(sprintId);
+    const requiresPoints = assignToSprint && issueType !== 'subtask';
+    const parsedPoints = Number(storyPoints);
+    if (requiresPoints && !(Number.isFinite(parsedPoints) && parsedPoints > 0)) return;
     const ticket: Ticket = {
       id: resolvedNextId,
       title: title.trim(),
@@ -87,6 +91,7 @@ export function CreateTaskModal({
       assigneeId: assigneeUser ? Number(assigneeUser.id) : undefined,
       reporter: currentUser.name,
       reporterId: Number(currentUser.id),
+      storyPoints: requiresPoints ? parsedPoints : undefined,
       startDate: startDate || undefined,
       dueDate: dueDate
         ? new Date(dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -180,6 +185,24 @@ export function CreateTaskModal({
             </select>
           </div>
 
+          {sprintId && issueType !== 'epic' && issueType !== 'subtask' && (
+            <div className="modal__field">
+              <label className="modal__label" htmlFor="task-points">
+                Story Points <span className="modal__required">*</span>
+              </label>
+              <input
+                id="task-points"
+                className="modal__input"
+                type="number"
+                min="1"
+                step="1"
+                value={storyPoints}
+                onChange={(event) => setStoryPoints(event.target.value)}
+                required
+              />
+            </div>
+          )}
+
           <div className="modal__row">
             <div className="modal__field">
               <label className="modal__label" htmlFor="task-start">Start Date</label>
@@ -218,7 +241,19 @@ export function CreateTaskModal({
 
           <div className="modal__footer">
             <button type="button" className="modal__btn modal__btn--cancel" onClick={onClose}>Cancel</button>
-            <button type="submit" className="modal__btn modal__btn--confirm" disabled={!title.trim()}>Create</button>
+            <button
+              type="submit"
+              className="modal__btn modal__btn--confirm"
+              disabled={
+                !title.trim()
+                || (Boolean(sprintId)
+                  && issueType !== 'epic'
+                  && issueType !== 'subtask'
+                  && !(Number(storyPoints) > 0))
+              }
+            >
+              Create
+            </button>
           </div>
         </form>
       </div>

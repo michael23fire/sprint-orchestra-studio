@@ -1,6 +1,12 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import type { Ticket, TicketStatus, TicketPriority, TicketLabel, IssueType } from '../types/ticket';
-import { FLAGGED_API_LABEL, labelsForIssueType, normalizeStatusForIssueType } from '../types/ticket';
+import {
+  FLAGGED_API_LABEL,
+  hasValidStoryPoints,
+  labelsForIssueType,
+  normalizeStatusForIssueType,
+  requiresSprintEstimate,
+} from '../types/ticket';
 import type { Sprint, SprintStatus, SprintReorderAction } from '../types/sprint';
 import { useSpaces } from './SpaceContext';
 import { useCurrentUser } from './UserContext';
@@ -68,7 +74,7 @@ function issueDtoToTicket(dto: IssueDto): Ticket {
     reporterId: dto.reporterId ?? undefined,
     dueDate: dto.dueDate ?? undefined,
     startDate: dto.startDate ?? undefined,
-    storyPoints: dto.storyPoints ?? undefined,
+    storyPoints: requiresSprintEstimate(issueType) ? (dto.storyPoints ?? undefined) : undefined,
     priority: (dto.priority as TicketPriority) ?? undefined,
     labels: labelsForIssueType(
       issueType,
@@ -171,6 +177,16 @@ function sprintDtoToSprint(dto: SprintDto): Sprint {
     endDate: dto.endDate ?? '',
     status: (dto.status as SprintStatus) ?? 'future',
     sprintOrder: dto.sprintOrder,
+    initialCommittedPoints: dto.initialCommittedPoints ?? undefined,
+    initialCompletedPoints: dto.initialCompletedPoints ?? undefined,
+    finalScopePoints: dto.finalScopePoints ?? undefined,
+    completedPoints: dto.completedPoints ?? undefined,
+    initialIssueCount: dto.initialIssueCount ?? undefined,
+    completedIssueCount: dto.completedIssueCount ?? undefined,
+    finalIssueCount: dto.finalIssueCount ?? undefined,
+    unestimatedIssueCount: dto.unestimatedIssueCount ?? undefined,
+    commitmentCompletionPercent: dto.commitmentCompletionPercent ?? undefined,
+    finalScopeCompletionPercent: dto.finalScopeCompletionPercent ?? undefined,
   };
 }
 
@@ -214,7 +230,7 @@ interface TicketContextValue {
   reorderSprint: (sprintId: string, action: SprintReorderAction) => void;
   updateSprint: (sprintId: string, updates: Partial<Pick<Sprint, 'name' | 'goal' | 'startDate' | 'endDate'>>) => void;
   deleteSprint: (sprintId: string) => void;
-  createIssueInSprint: (sprintId: string | null, title: string) => void;
+  createIssueInSprint: (sprintId: string | null, title: string, storyPoints?: number) => void;
   deleteTicket: (ticketId: string) => void;
   addComment: (issueDbId: number, authorId: number, content: string) => void;
   editComment: (issueDbId: number, commentId: number, content: string) => void;
@@ -308,6 +324,12 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     if (apiReady) fetchFromApi();
   }, [apiReady, spaceId, fetchFromApi]);
 
+  useEffect(() => {
+    const refreshAfterLabelChange = () => fetchFromApi();
+    window.addEventListener('space-labels-changed', refreshAfterLabelChange);
+    return () => window.removeEventListener('space-labels-changed', refreshAfterLabelChange);
+  }, [fetchFromApi]);
+
   const setTickets: React.Dispatch<React.SetStateAction<Ticket[]>> = useCallback(
     (action) => {
       setDataBySpace((prev) => {
@@ -358,6 +380,10 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
   // ── Add ticket (from CreateTaskModal's addTicket path) ──
   const addTicket = useCallback(
     (ticket: Ticket) => {
+      if (ticket.sprintId && requiresSprintEstimate(ticket.issueType) && !hasValidStoryPoints(ticket.storyPoints)) {
+        alert('Story points are required before adding this issue to a sprint.');
+        return;
+      }
       setTickets((prev) => [...prev, ticket]);
       if (canApi && spaceIdNum != null) {
         issueApi.create(spaceIdNum, {
@@ -395,6 +421,14 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         typeLocked.issueType === 'epic'
           ? { ...typeLocked, parentId: undefined, sprintId: undefined, sprint: '' }
           : typeLocked;
+      if (
+        normalized.sprintId
+        && requiresSprintEstimate(normalized.issueType)
+        && !hasValidStoryPoints(normalized.storyPoints)
+      ) {
+        alert('Story points are required before assigning this issue to a sprint.');
+        return Promise.resolve(false);
+      }
       const parentDbId = normalized.parentId
         ? currentData.tickets.find((t) => t.id === normalized.parentId)?.dbId
         : undefined;
@@ -441,6 +475,13 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
       if (updates.length === 0) return;
       const byId = new Map(updates.map((u) => [u.ticketId, u]));
       const movedWithSprint = updates.find((u) => u.sprintId !== undefined);
+      if (movedWithSprint?.sprintId) {
+        const moving = currentData.tickets.find((ticket) => ticket.id === movedWithSprint.ticketId);
+        if (moving && requiresSprintEstimate(moving.issueType) && !hasValidStoryPoints(moving.storyPoints)) {
+          alert(`Add story points to ${moving.id} before moving it into a sprint.`);
+          return;
+        }
+      }
 
       setTickets((prev) => {
         const sprintName =
@@ -609,13 +650,18 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
 
   // ── Create issue inline (Backlog/Board "Create issue" button) ──
   const createIssueInSprint = useCallback(
-    (sprintId: string | null, title: string) => {
+    (sprintId: string | null, title: string, storyPoints?: number) => {
+      if (sprintId && !hasValidStoryPoints(storyPoints)) {
+        alert('Story points are required before adding a task to a sprint.');
+        return;
+      }
       if (canApi && spaceIdNum != null) {
         issueApi.create(spaceIdNum, {
           title,
           issueType: 'task',
           status: 'planned',
           sprintId: sprintId ? Number(sprintId) : undefined,
+          storyPoints,
           reporterId: Number(currentUser.id),
         }).then(() => fetchFromApi()).catch(() => {});
       } else {
@@ -628,6 +674,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
             title,
             status: 'planned',
             issueType: 'task',
+            storyPoints,
             reporter: currentUser.name,
             sprintId: sprintId ?? undefined,
           };
@@ -678,6 +725,16 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
   // ── Start sprint ──
   const startSprint = useCallback(
     (sprintId: string, updates: Pick<Sprint, 'startDate' | 'endDate' | 'goal'>) => {
+      const missingPoints = currentData.tickets.filter(
+        (ticket) =>
+          ticket.sprintId === sprintId
+          && requiresSprintEstimate(ticket.issueType)
+          && !hasValidStoryPoints(ticket.storyPoints),
+      );
+      if (missingPoints.length > 0) {
+        alert(`Add story points before starting: ${missingPoints.map((ticket) => ticket.id).join(', ')}`);
+        return;
+      }
       const active = currentData.sprints.find((s) => s.status === 'active' && s.id !== sprintId);
       if (active) {
         alert(`There can only be one active sprint. Complete "${active.name}" first.`);
@@ -711,7 +768,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         });
       }
     },
-    [setSprints, canApi, spaceIdNum, currentData.sprints, fetchFromApi],
+    [setSprints, canApi, spaceIdNum, currentData.sprints, currentData.tickets, fetchFromApi],
   );
 
   // ── Complete sprint (Jira-style: choose where incomplete issues go) ──

@@ -4807,20 +4807,33 @@
   overflow-y: auto;
 }
 
+.label-select__create {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.5rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.label-select__create input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+}
+
 .label-select__option {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
+  padding: 0;
   font-size: 0.8125rem;
   color: var(--text-primary);
   transition: background 0.1s;
   width: 100%;
-  border: none;
-  background: transparent;
-  text-align: left;
-  font-family: inherit;
 }
 
 .label-select__option:hover {
@@ -4836,6 +4849,54 @@
   color: var(--color-primary);
   width: 14px;
   flex-shrink: 0;
+}
+
+.label-select__option-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.label-select__delete {
+  margin-right: 0.4rem;
+  padding: 0.3rem;
+  border: 0;
+  background: transparent;
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.label-select__delete:hover {
+  opacity: 1;
+}
+
+.label-select__create-action {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.label-select__empty,
+.label-select__error {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.label-select__error {
+  color: #b91c1c;
 }
 
 /* Subtasks section */

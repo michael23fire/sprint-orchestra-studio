@@ -1,5 +1,5 @@
 import type { Ticket } from '../types/ticket';
-import { ISSUE_TYPE_META, LABEL_COLORS, PRIORITY_META, labelsForIssueType } from '../types/ticket';
+import { ISSUE_TYPE_META, labelColor, PRIORITY_META, labelsForIssueType } from '../types/ticket';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { EpicPill, IssueKeyChip } from './IssueKeyChip';
 import { formatDueDateWithTime, parseDueDate } from '../utils/dueDate';
@@ -169,7 +169,7 @@ export function TicketCard({
               <span
                 key={label}
                 className="ticket-card__label"
-                style={{ background: LABEL_COLORS[label].bg, color: LABEL_COLORS[label].text }}
+                style={{ background: labelColor(label).bg, color: labelColor(label).text }}
               >
                 {label}
               </span>

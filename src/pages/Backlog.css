@@ -31,6 +31,72 @@
   box-shadow: 0 0 0 3px var(--color-primary-glow);
 }
 
+.bl-toolbar__view-control {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-left: 0.25rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.bl-toolbar__view-label {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bl-toolbar__subtask-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.bl-toolbar__subtask-switch:hover {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.bl-toolbar__switch-track {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  transition: background 0.15s;
+}
+
+.bl-toolbar__switch-track.is-on {
+  background: var(--color-primary);
+}
+
+.bl-toolbar__switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.25);
+  transition: transform 0.15s;
+}
+
+.bl-toolbar__switch-track.is-on .bl-toolbar__switch-thumb {
+  transform: translateX(12px);
+}
+
 /* ─── Shared buttons ─── */
 .bl-btn {
   padding: 0.42rem 0.875rem;
@@ -235,6 +301,13 @@
   font-size: 0.72rem;
   color: var(--text-muted);
   margin-left: 0.1rem;
+}
+
+.bl-sprint__history-points {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: help;
 }
 
 .bl-sprint__estimate-popup {
@@ -514,6 +587,16 @@
   border-bottom: 1px solid var(--border);
 }
 
+.bl-sprint__history-note {
+  margin: 0 1rem 0.625rem 2.5rem;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid #f59e0b;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.78rem;
+}
+
 .bl-sprint__body {
   padding: 0.25rem 0 0.5rem;
 }
@@ -759,6 +842,14 @@
   box-shadow: 0 0 0 3px var(--color-primary-glow);
   font-family: inherit;
   background: #fff;
+}
+
+.bl-inline-create__points {
+  width: 82px;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font: inherit;
 }
 
 /* ─── Start Sprint Modal ─── */

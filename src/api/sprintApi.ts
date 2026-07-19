@@ -10,6 +10,16 @@ export interface SprintDto {
   endDate: string | null;
   status: string;
   sprintOrder?: number;
+  initialCommittedPoints: number | null;
+  initialCompletedPoints: number | null;
+  finalScopePoints: number | null;
+  completedPoints: number | null;
+  initialIssueCount: number | null;
+  completedIssueCount: number | null;
+  finalIssueCount: number | null;
+  unestimatedIssueCount: number | null;
+  commitmentCompletionPercent: number | null;
+  finalScopeCompletionPercent: number | null;
 }
 
 export interface CreateSprintRequest {
