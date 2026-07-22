@@ -1151,11 +1151,15 @@ export function Board() {
                   const typeMeta = ISSUE_TYPE_META[t.issueType ?? 'task'];
                   const assignee = t.assignees?.[0] ?? t.assignee;
                   return (
-                  <button
+                  <Link
                     key={t.id}
-                    type="button"
+                    to={`/ticket/${t.id}`}
                     className="board-insights__item"
-                    onClick={() => openTicketModal(t.id)}
+                    onClick={(e) => {
+                      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                      e.preventDefault();
+                      openTicketModal(t.id);
+                    }}
                     aria-label={`Open issue ${t.id} ${t.title}`}
                   >
                     <span className="board-insights__item-body">
@@ -1190,7 +1194,7 @@ export function Board() {
                         {assignee && <AssigneeAvatar name={assignee} size="card" className="board-insights__assignee" />}
                       </span>
                     </span>
-                  </button>
+                  </Link>
                   );
                 })}
               </div>

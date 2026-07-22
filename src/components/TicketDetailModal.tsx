@@ -25,8 +25,21 @@ import { formatDueDateWithTime } from '../utils/dueDate';
 
 /** Zoom slider at 100% → this many × more pixels/ms than “fit to panel”. */
 const LIFECYCLE_BAR_ZOOM_MAX_MULT = 14;
-import { attachmentApi, historyApi, labelApi } from '../api';
+import { attachmentApi, historyApi, issueApi, labelApi } from '../api';
 import type { IssueAttachmentDto, IssueHistoryDto, LabelDto } from '../api';
+import {
+  containsHtmlMarkup,
+  escapeCommentHtml,
+  findAttachmentById,
+  findAttachmentByName,
+  prepareCommentHtmlForDisplay,
+  resolveAttachmentFromElement,
+} from '../utils/commentHtml';
+import {
+  getAttachmentPreviewKind,
+  parseCsv,
+  readSpreadsheetRows,
+} from '../utils/attachmentPreview';
 import {
   createPendingAttachment,
   finalizeEditorHtmlWithUploads,
@@ -52,6 +65,48 @@ const LINK_RELATION_OPTIONS = [
   'relates to',
 ] as const;
 const LINK_RECENT_KEYS_STORAGE = 'jira_link_recent_issue_keys';
+
+/** File-type badge for attachment list / inline chips (Jira-like colors). */
+function attachmentTypeBadge(
+  contentType?: string | null,
+  filename?: string | null,
+): { label: string; kind: 'pdf' | 'doc' | 'xls' | 'csv' | 'txt' | 'img' | 'file' } {
+  const name = (filename || '').toLowerCase();
+  const ct = (contentType || '').toLowerCase();
+  if (ct.includes('pdf') || name.endsWith('.pdf')) return { label: 'PDF', kind: 'pdf' };
+  if (
+    ct.includes('wordprocessingml') ||
+    ct.includes('msword') ||
+    name.endsWith('.docx') ||
+    name.endsWith('.doc')
+  ) {
+    return { label: 'DOC', kind: 'doc' };
+  }
+  if (
+    ct.includes('spreadsheetml') ||
+    ct.includes('ms-excel') ||
+    name.endsWith('.xlsx') ||
+    name.endsWith('.xls')
+  ) {
+    return { label: 'XLS', kind: 'xls' };
+  }
+  if (ct.includes('csv') || name.endsWith('.csv')) return { label: 'CSV', kind: 'csv' };
+  if (
+    ct.startsWith('text/') ||
+    name.endsWith('.txt') ||
+    name.endsWith('.md') ||
+    name.endsWith('.log')
+  ) {
+    return { label: 'TXT', kind: 'txt' };
+  }
+  if (
+    ct.startsWith('image/') ||
+    /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(name)
+  ) {
+    return { label: 'IMG', kind: 'img' };
+  }
+  return { label: 'FILE', kind: 'file' };
+}
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
   planned:     '#8b5cf6',
@@ -462,6 +517,9 @@ export function TicketDetailModal({
   const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<number, string>>({});
   const [previewAttachment, setPreviewAttachment] = useState<NonNullable<Ticket['attachments']>[number] | null>(null);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewTable, setPreviewTable] = useState<string[][] | null>(null);
+  const [previewSheetName, setPreviewSheetName] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [linkRelation, setLinkRelation] = useState<(typeof LINK_RELATION_OPTIONS)[number]>('is blocked by');
   const [linkTarget, setLinkTarget] = useState('');
@@ -707,12 +765,40 @@ export function TicketDetailModal({
     historyApi.getByIssue(ticket.dbId)
       .then((items) => { if (!cancelled) setHistoryItems(items); })
       .catch(() => { if (!cancelled) setHistoryItems([]); });
-    attachmentApi.getByIssue(ticket.dbId)
-      .then((items) => { if (!cancelled) setAttachments(items.map(mapAttachmentDto)); })
-      .catch(() => { if (!cancelled) setAttachments([]); });
     return () => { cancelled = true; };
     // Re-fetch history when comments change so “added a comment” rows stay in sync on All.
   }, [ticket.dbId, ticket.id, ticket.status, ticket.createdAt, ticket.comments]);
+
+  // Always pull fresh comments + attachments when the modal opens so inline
+  // `[file]` chips stay in sync after dataset re-seeds (stale cached comments
+  // kept old attachment ids/names while getByIssue returned the new files).
+  useEffect(() => {
+    const spaceId = Number(currentSpace.id);
+    if (!Number.isFinite(spaceId) || spaceId <= 0 || !ticket.id) return;
+    let cancelled = false;
+    issueApi.getByKey(spaceId, ticket.id)
+      .then((dto) => {
+        if (cancelled) return;
+        setDraft((prev) => ({
+          ...prev,
+          comments: dto.comments?.map((c) => ({
+            id: String(c.id),
+            authorId: c.authorId,
+            author: c.authorName,
+            content: c.content,
+            createdAt: c.createdAt,
+          })) ?? prev.comments ?? [],
+        }));
+        setAttachments(dto.attachments?.map(mapAttachmentDto) ?? []);
+      })
+      .catch(() => {
+        if (cancelled || ticket.dbId == null) return;
+        attachmentApi.getByIssue(ticket.dbId)
+          .then((items) => { if (!cancelled) setAttachments(items.map(mapAttachmentDto)); })
+          .catch(() => { if (!cancelled) setAttachments([]); });
+      });
+    return () => { cancelled = true; };
+  }, [currentSpace.id, ticket.id, ticket.dbId]);
 
   useEffect(() => {
     if (!ticket.dbId) return;
@@ -811,7 +897,7 @@ export function TicketDetailModal({
     editor.querySelectorAll('img[data-attachment-id], img[data-attachment-name]').forEach((img) => {
       const idAttr = img.getAttribute('data-attachment-id');
       const nameAttr = img.getAttribute('data-attachment-name');
-      const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
+      const attachment = findAttachmentById(attachments, idAttr) ?? (nameAttr ? findAttachmentByName(attachments, nameAttr) : undefined);
       if (!attachment) return;
       const src = attachmentPreviewUrls[attachment.id];
       if (src && img.getAttribute('src') !== src) {
@@ -827,7 +913,7 @@ export function TicketDetailModal({
     editor.querySelectorAll('img[data-attachment-id], img[data-attachment-name]').forEach((img) => {
       const idAttr = img.getAttribute('data-attachment-id');
       const nameAttr = img.getAttribute('data-attachment-name');
-      const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
+      const attachment = findAttachmentById(attachments, idAttr) ?? (nameAttr ? findAttachmentByName(attachments, nameAttr) : undefined);
       if (!attachment) return;
       const src = attachmentPreviewUrls[attachment.id];
       if (src && img.getAttribute('src') !== src) {
@@ -1483,20 +1569,63 @@ export function TicketDetailModal({
       URL.revokeObjectURL(previewObjectUrl);
       setPreviewObjectUrl(null);
     }
-    const isImage = attachment.contentType?.startsWith('image/');
-    const isPdf = attachment.contentType?.includes('pdf') || attachment.originalFilename.toLowerCase().endsWith('.pdf');
-    if (!isImage && !isPdf) return;
+    setPreviewText(null);
+    setPreviewTable(null);
+    setPreviewSheetName(null);
+
+    const previewKind = getAttachmentPreviewKind(attachment.contentType, attachment.originalFilename);
+    if (previewKind === 'unsupported') return;
     if (!ticket.dbId) return;
-    if (isImage && attachmentPreviewUrls[attachment.id]) return;
+    if (previewKind === 'image' && attachmentPreviewUrls[attachment.id]) return;
+
     try {
       setPreviewLoading(true);
       const blob = await attachmentApi.download(ticket.dbId, attachment.id);
-      setPreviewObjectUrl(URL.createObjectURL(blob));
+      if (previewKind === 'image' || previewKind === 'pdf') {
+        setPreviewObjectUrl(URL.createObjectURL(blob));
+        return;
+      }
+      if (previewKind === 'text') {
+        setPreviewText(await blob.text());
+        return;
+      }
+      if (previewKind === 'csv') {
+        setPreviewTable(parseCsv(await blob.text()));
+        return;
+      }
+      if (previewKind === 'spreadsheet') {
+        const { sheetName, rows } = await readSpreadsheetRows(blob);
+        setPreviewSheetName(sheetName);
+        setPreviewTable(rows);
+      }
     } catch {
       alert('Failed to load preview');
     } finally {
       setPreviewLoading(false);
     }
+  }
+
+  function handleCommentAttachmentClick(event: React.MouseEvent<HTMLElement>) {
+    const anchor = (event.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+    if (anchor) {
+      event.preventDefault();
+      event.stopPropagation();
+      window.open(anchor.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    const el = (event.target as HTMLElement).closest('[data-attachment-id],[data-attachment-name]') as HTMLElement | null;
+    if (!el) return;
+    const attachment = resolveAttachmentFromElement(attachments, el);
+    if (!attachment) {
+      const nameAttr = el.getAttribute('data-attachment-name');
+      alert(nameAttr
+        ? `Attachment "${nameAttr}" is not available. Refresh the page or re-open this issue.`
+        : 'Attachment is not available. Refresh the page or re-open this issue.');
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void openAttachmentPreview(attachment);
   }
 
   function closeAttachmentPreview() {
@@ -1505,6 +1634,9 @@ export function TicketDetailModal({
       URL.revokeObjectURL(previewObjectUrl);
       setPreviewObjectUrl(null);
     }
+    setPreviewText(null);
+    setPreviewTable(null);
+    setPreviewSheetName(null);
     setPreviewLoading(false);
   }
 
@@ -1518,11 +1650,12 @@ export function TicketDetailModal({
       <>
         {cleaned ? <p className="ticket-detail__comment-text">{cleaned}</p> : null}
         {Array.from(usedNames).map((name) => {
-          const attachment = findAttachmentByName(name);
+          const attachment = findAttachmentByName(attachments, name);
           if (!attachment) {
             return <p key={name} className="ticket-detail__comment-attachment-missing">Attachment not found: {name}</p>;
           }
           const isImage = attachment.contentType?.startsWith('image/');
+          const badge = attachmentTypeBadge(attachment.contentType, attachment.originalFilename);
           return (
             <button
               key={`${name}-${attachment.id}`}
@@ -1533,7 +1666,11 @@ export function TicketDetailModal({
               {isImage && attachmentPreviewUrls[attachment.id] ? (
                 <img src={attachmentPreviewUrls[attachment.id]} alt={attachment.originalFilename} className="ticket-detail__comment-attachment-thumb ticket-detail__comment-attachment-thumb--comment" />
               ) : (
-                <span className="ticket-detail__comment-attachment-file">{attachment.contentType?.includes('pdf') ? 'PDF' : 'FILE'}</span>
+                <span
+                  className={`ticket-detail__comment-attachment-file ticket-detail__comment-attachment-file--${badge.kind}`}
+                >
+                  {badge.label}
+                </span>
               )}
               <span>{attachment.originalFilename}</span>
             </button>
@@ -1560,36 +1697,11 @@ export function TicketDetailModal({
     container.querySelectorAll('[data-attachment-name], [data-attachment-id]').forEach((el) => {
       const idAttr = el.getAttribute('data-attachment-id');
       const nameAttr = el.getAttribute('data-attachment-name');
-      const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
+      const attachment = findAttachmentById(attachments, idAttr) ?? (nameAttr ? findAttachmentByName(attachments, nameAttr) : undefined);
       if (attachment?.originalFilename) result.add(attachment.originalFilename);
       else if (nameAttr) result.add(nameAttr.trim());
     });
     return result;
-  }
-
-  function normalizeAttachmentName(name: string) {
-    return name
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, '')
-      .replace(/[^\p{L}\p{N}._-]/gu, '');
-  }
-
-  function findAttachmentByName(name: string) {
-    const raw = name.trim().toLowerCase();
-    const normalized = normalizeAttachmentName(name);
-    return (attachments ?? []).find((a) => {
-      const fileRaw = a.originalFilename.trim().toLowerCase();
-      if (fileRaw === raw) return true;
-      return normalizeAttachmentName(a.originalFilename) === normalized;
-    });
-  }
-
-  function findAttachmentById(id: number | string | null | undefined) {
-    if (id === null || id === undefined || id === '') return undefined;
-    const numId = typeof id === 'string' ? Number(id) : id;
-    if (!Number.isFinite(numId)) return undefined;
-    return (attachments ?? []).find((a) => a.id === numId);
   }
 
   function renderInlineAttachmentPreviews(text: string) {
@@ -1600,9 +1712,10 @@ export function TicketDetailModal({
     return (
       <div className="ticket-detail__comment-inline-attachments">
         {Array.from(names).map((name) => {
-          const attachment = findAttachmentByName(name);
+          const attachment = findAttachmentByName(attachments, name);
           if (!attachment) return null;
           const isImage = attachment.contentType?.startsWith('image/');
+          const badge = attachmentTypeBadge(attachment.contentType, attachment.originalFilename);
           return (
             <button
               key={`inline-${attachment.id}`}
@@ -1613,7 +1726,11 @@ export function TicketDetailModal({
               {isImage && attachmentPreviewUrls[attachment.id] ? (
                 <img src={attachmentPreviewUrls[attachment.id]} alt={attachment.originalFilename} className="ticket-detail__comment-attachment-thumb ticket-detail__comment-attachment-thumb--large" />
               ) : (
-                <span className="ticket-detail__comment-attachment-file ticket-detail__comment-attachment-file--large">{attachment.contentType?.includes('pdf') ? 'PDF' : 'FILE'}</span>
+                <span
+                  className={`ticket-detail__comment-attachment-file ticket-detail__comment-attachment-file--large ticket-detail__comment-attachment-file--${badge.kind}`}
+                >
+                  {badge.label}
+                </span>
               )}
               <span>{attachment.originalFilename}</span>
             </button>
@@ -1848,17 +1965,7 @@ export function TicketDetailModal({
   }
 
   function escapeHtml(value: string) {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  /** True when value has tags or HTML entities (e.g. &nbsp;) that must be parsed as HTML. */
-  function containsHtmlMarkup(value: string): boolean {
-    return /<\/?[a-z][\s\S]*>/i.test(value) || /&(?:[a-z]+|#\d+|#x[\da-f]+);/i.test(value);
+    return escapeCommentHtml(value);
   }
 
   function normalizeCommentHtml(html: string) {
@@ -1889,7 +1996,7 @@ export function TicketDetailModal({
   function expandAttachmentTokensToHtml(text: string): string {
     const buildAttachmentHtml = (rawName: string): string => {
       const name = rawName.trim();
-      const attachment = findAttachmentByName(name);
+      const attachment = findAttachmentByName(attachments, name);
       if (!attachment) {
         return `<span data-attachment-name="${escapeHtml(name)}" data-attachment-missing="true">[file] ${escapeHtml(name)}</span>`;
       }
@@ -1916,22 +2023,29 @@ export function TicketDetailModal({
 
   function hydrateCommentHtml(html: string) {
     const container = document.createElement('div');
-    container.innerHTML = html;
-    container.querySelectorAll('img[data-attachment-name], img[data-attachment-id]').forEach((img) => {
-      const idAttr = img.getAttribute('data-attachment-id');
-      const nameAttr = img.getAttribute('data-attachment-name');
-      const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
+    container.innerHTML = prepareCommentHtmlForDisplay(html);
+    container.querySelectorAll('[data-attachment-name], [data-attachment-id]').forEach((el) => {
+      const idAttr = el.getAttribute('data-attachment-id');
+      const nameAttr = el.getAttribute('data-attachment-name');
+      const attachment = findAttachmentById(attachments, idAttr) ?? (nameAttr ? findAttachmentByName(attachments, nameAttr) : undefined);
       if (!attachment) {
-        img.setAttribute('data-attachment-missing', 'true');
-        img.removeAttribute('src');
-        img.setAttribute('alt', nameAttr || 'attachment missing');
+        if (el.tagName === 'IMG') {
+          el.setAttribute('data-attachment-missing', 'true');
+          el.removeAttribute('src');
+          el.setAttribute('alt', nameAttr || 'attachment missing');
+        } else {
+          el.setAttribute('data-attachment-missing', 'true');
+        }
         return;
       }
-      img.setAttribute('data-attachment-id', String(attachment.id));
-      img.setAttribute('data-attachment-name', attachment.originalFilename);
-      const src = attachmentPreviewUrls[attachment.id];
-      if (src) img.setAttribute('src', src);
-      img.classList.add('ticket-rich-image');
+      el.setAttribute('data-attachment-id', String(attachment.id));
+      el.setAttribute('data-attachment-name', attachment.originalFilename);
+      el.removeAttribute('data-attachment-missing');
+      if (el.tagName === 'IMG') {
+        const src = attachmentPreviewUrls[attachment.id];
+        if (src) el.setAttribute('src', src);
+        el.classList.add('ticket-rich-image');
+      }
     });
     return container.innerHTML;
   }
@@ -2039,16 +2153,38 @@ export function TicketDetailModal({
           </span>
         </nav>
 
-        {/* Header */}
+        {/* Header: key + status + title stay pinned; only body scrolls */}
         <div className="ticket-detail__header">
           <div className="ticket-detail__header-left">
-            <IssueKeyChip issueKey={draft.id} size="lg" variant="header" className="ticket-detail__id-chip" />
-            <span
-              className="ticket-detail__status-badge"
-              style={{ background: statusColor + '22', color: statusColor, borderColor: statusColor + '55' }}
-            >
-              {detailStatusOptions.find((s) => s.value === draft.status)?.label}
-            </span>
+            <div className="ticket-detail__header-meta">
+              <IssueKeyChip issueKey={draft.id} size="lg" variant="header" className="ticket-detail__id-chip" />
+              <span
+                className="ticket-detail__status-badge"
+                style={{ background: statusColor + '22', color: statusColor, borderColor: statusColor + '55' }}
+              >
+                {detailStatusOptions.find((s) => s.value === draft.status)?.label}
+              </span>
+            </div>
+            <div className="ticket-detail__header-title">
+              {editingTitle ? (
+                <input
+                  ref={titleInputRef}
+                  className="ticket-detail__title-input ticket-detail__title-input--header"
+                  value={draft.title}
+                  onChange={(e) => patch('title', e.target.value)}
+                  onBlur={() => setEditingTitle(false)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false); }}
+                />
+              ) : (
+                <h1
+                  className="ticket-detail__title ticket-detail__title--header"
+                  onClick={() => setEditingTitle(true)}
+                  title={draft.title ? `${draft.title} (click to edit)` : 'Click to edit'}
+                >
+                  {draft.title || <span className="ticket-detail__placeholder">Add title…</span>}
+                </h1>
+              )}
+            </div>
           </div>
           <div className="ticket-detail__header-actions">
             <div className="ticket-detail__ai-wrapper" ref={aiMenuRef}>
@@ -2135,24 +2271,6 @@ export function TicketDetailModal({
         <div className="ticket-detail__body">
           {/* Left panel */}
           <div className="ticket-detail__left">
-            {/* Title */}
-            <div className="ticket-detail__title-wrap">
-              {editingTitle ? (
-                <input
-                  ref={titleInputRef}
-                  className="ticket-detail__title-input"
-                  value={draft.title}
-                  onChange={(e) => patch('title', e.target.value)}
-                  onBlur={() => setEditingTitle(false)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false); }}
-                />
-              ) : (
-                <h1 className="ticket-detail__title" onClick={() => setEditingTitle(true)} title="Click to edit">
-                  {draft.title || <span className="ticket-detail__placeholder">Add title…</span>}
-                </h1>
-              )}
-            </div>
-
             {/* Description */}
             <div className="ticket-detail__section">
               <h3 className="ticket-detail__section-title">Description</h3>
@@ -2196,23 +2314,10 @@ export function TicketDetailModal({
                   className={`ticket-detail__desc-view ${!draft.description ? 'ticket-detail__desc-view--empty' : ''} ticket-detail__comment-rich-content`}
                   onClick={(e) => {
                     const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
-                    if (anchor) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      window.open(anchor.href, '_blank', 'noopener,noreferrer');
+                    const attachmentEl = (e.target as HTMLElement).closest('[data-attachment-id],[data-attachment-name]') as HTMLElement | null;
+                    if (anchor || attachmentEl) {
+                      handleCommentAttachmentClick(e);
                       return;
-                    }
-                    const el = (e.target as HTMLElement).closest('[data-attachment-id],[data-attachment-name]') as HTMLElement | null;
-                    if (el) {
-                      const idAttr = el.getAttribute('data-attachment-id');
-                      const nameAttr = el.getAttribute('data-attachment-name');
-                      const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
-                      if (attachment) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openAttachmentPreview(attachment);
-                        return;
-                      }
                     }
                     setEditingDesc(true);
                   }}
@@ -2256,7 +2361,9 @@ export function TicketDetailModal({
                 {panelAttachments.length === 0 && (
                   <p className="ticket-detail__no-comments">No attachments yet.</p>
                 )}
-                {panelAttachments.map((a) => (
+                {panelAttachments.map((a) => {
+                  const badge = attachmentTypeBadge(a.contentType, a.originalFilename);
+                  return (
                   <div key={a.id} className="ticket-detail__attachment-item">
                     <button
                       type="button"
@@ -2266,8 +2373,10 @@ export function TicketDetailModal({
                       {attachmentPreviewUrls[a.id] ? (
                         <img className="ticket-detail__attachment-thumb" src={attachmentPreviewUrls[a.id]} alt={a.originalFilename} />
                       ) : (
-                        <span className="ticket-detail__attachment-thumb ticket-detail__attachment-thumb--placeholder">
-                          {a.contentType?.includes('pdf') ? 'PDF' : 'FILE'}
+                        <span
+                          className={`ticket-detail__attachment-thumb ticket-detail__attachment-thumb--placeholder ticket-detail__attachment-thumb--placeholder--${badge.kind}`}
+                        >
+                          {badge.label}
                         </span>
                       )}
                       <span className="ticket-detail__attachment-name">{a.originalFilename}</span>
@@ -2283,7 +2392,8 @@ export function TicketDetailModal({
                       ✕
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -2638,24 +2748,7 @@ export function TicketDetailModal({
                           ? <div
                               className="ticket-detail__comment-rich-content"
                               dangerouslySetInnerHTML={{ __html: hydrateCommentHtml(c.content) }}
-                              onClick={(e) => {
-                                const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
-                                if (anchor) {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  window.open(anchor.href, '_blank', 'noopener,noreferrer');
-                                  return;
-                                }
-                                const el = (e.target as HTMLElement).closest('[data-attachment-id],[data-attachment-name]') as HTMLElement | null;
-                                if (!el) return;
-                                const idAttr = el.getAttribute('data-attachment-id');
-                                const nameAttr = el.getAttribute('data-attachment-name');
-                                const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
-                                if (!attachment) return;
-                                e.preventDefault();
-                                e.stopPropagation();
-                                openAttachmentPreview(attachment);
-                              }}
+                              onClick={handleCommentAttachmentClick}
                             />
                           : renderCommentWithAttachments(c.content))
                       )}
@@ -2694,24 +2787,7 @@ export function TicketDetailModal({
                             ? <div
                                 className="ticket-detail__history-comment ticket-detail__comment-rich-content"
                                 dangerouslySetInnerHTML={{ __html: hydrateCommentHtml(linkedComment.content) }}
-                                onClick={(e) => {
-                                  const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
-                                  if (anchor) {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    window.open(anchor.href, '_blank', 'noopener,noreferrer');
-                                    return;
-                                  }
-                                  const el = (e.target as HTMLElement).closest('[data-attachment-id],[data-attachment-name]') as HTMLElement | null;
-                                  if (!el) return;
-                                  const idAttr = el.getAttribute('data-attachment-id');
-                                  const nameAttr = el.getAttribute('data-attachment-name');
-                                  const attachment = findAttachmentById(idAttr) ?? (nameAttr ? findAttachmentByName(nameAttr) : undefined);
-                                  if (!attachment) return;
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  openAttachmentPreview(attachment);
-                                }}
+                                onClick={handleCommentAttachmentClick}
                               />
                             : <div className="ticket-detail__history-comment">
                                 {renderCommentWithAttachments(linkedComment.content)}
@@ -3239,7 +3315,7 @@ export function TicketDetailModal({
                 <button type="button" className="ticket-detail__close" onClick={closeAttachmentPreview}>✕</button>
               </div>
             </div>
-            <div className="ticket-detail__preview-body">
+            <div className={`ticket-detail__preview-body${previewText !== null || previewTable ? ' ticket-detail__preview-body--scroll' : ''}`}>
               {previewLoading ? <p>Loading preview...</p> : null}
               {!previewLoading && previewAttachment.contentType?.startsWith('image/') && (
                 <img
@@ -3255,7 +3331,35 @@ export function TicketDetailModal({
                   title={previewAttachment.originalFilename}
                 />
               )}
-              {!previewLoading && !previewAttachment.contentType?.startsWith('image/') && !previewAttachment.contentType?.includes('pdf') && !previewAttachment.originalFilename.toLowerCase().endsWith('.pdf') && (
+              {!previewLoading && previewText !== null && (
+                <pre className="ticket-detail__preview-text">{previewText}</pre>
+              )}
+              {!previewLoading && previewTable && previewTable.length > 0 && (
+                <div className="ticket-detail__preview-table-wrap">
+                  {previewSheetName ? <p className="ticket-detail__preview-sheet-name">{previewSheetName}</p> : null}
+                  <table className="ticket-detail__preview-table">
+                    <thead>
+                      <tr>
+                        {previewTable[0].map((cell, columnIndex) => (
+                          <th key={`head-${columnIndex}`}>{cell}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewTable.slice(1).map((row, rowIndex) => (
+                        <tr key={`row-${rowIndex}`}>
+                          {row.map((cell, columnIndex) => (
+                            <td key={`cell-${rowIndex}-${columnIndex}`}>{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!previewLoading
+                && getAttachmentPreviewKind(previewAttachment.contentType, previewAttachment.originalFilename) === 'unsupported'
+                && (
                 <p>Preview is not available for this file type. Click Download to open it locally.</p>
               )}
             </div>

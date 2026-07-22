@@ -12,6 +12,7 @@ export { attachmentApi } from './attachmentApi';
 export { codeLinkApi } from './codeLinkApi';
 export { githubRepoApi } from './githubRepoApi';
 export { labelApi } from './labelApi';
+export { searchApi } from './searchApi';
 
 export type { LoginRequest, AuthTokenResponse } from './authApi';
 export type { UserDto, CreateUserRequest } from './userApi';
@@ -25,6 +26,7 @@ export type { IssueLinkDto, CreateIssueLinkRequest } from './issueLinkApi';
 export type { IssueAttachmentDto } from './attachmentApi';
 export type { IssueCodeLinkDto, CreateIssueCodeLinkRequest, CodeLinkKind, RefreshResult, GithubTokenBody } from './codeLinkApi';
 export type { LabelDto } from './labelApi';
+export type { SearchResultDto } from './searchApi';
 export type {
   SpaceGithubRepoDto,
   CreateSpaceGithubRepoRequest,

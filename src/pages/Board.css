@@ -2525,16 +2525,16 @@
   justify-content: center;
   z-index: 1000;
   animation: overlay-in 0.15s ease;
-  padding: 1rem;
+  padding: 0.5rem;
 }
 
 .ticket-detail-modal {
   background: var(--bg-card);
   border-radius: var(--r-lg);
-  width: min(1200px, 92vw);
+  width: min(1560px, 97vw);
   max-width: 100%;
-  height: min(880px, 90vh);
-  max-height: 90vh;
+  height: min(980px, 96vh);
+  max-height: 96vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
@@ -2627,7 +2627,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.5rem;
+  gap: 1rem;
+  padding: 0.65rem 1.5rem;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -2636,6 +2637,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  flex-shrink: 0;
 }
 
 /* ─── "⋯" more-actions menu (destructive actions live here, Jira-style) ─── */
@@ -2833,7 +2835,65 @@
 .ticket-detail__header-left {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.ticket-detail__header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
+.ticket-detail__header-title {
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 0.65rem;
+  margin-left: 0.15rem;
+  display: flex;
+  align-items: center;
+  min-height: 1.75rem;
+}
+
+.ticket-detail__title--header {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.3;
+  padding: 0.125rem 0.3rem;
+  border: 2px solid transparent;
+  border-radius: var(--r-sm);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.ticket-detail__title--header:hover {
+  background: #f8fafc;
+  border-color: var(--border);
+}
+
+.ticket-detail__title-input--header {
+  width: 100%;
+  font-size: 1rem;
+  line-height: 1.3;
+  padding: 0.125rem 0.3rem;
+}
+
+.ticket-detail__header-left .ticket-detail__id-chip {
+  /* md sizing in header — balances with status pill + title */
+  font-size: 0.78rem;
+  padding: 0.18em 0.48em 0.18em 0.44em;
+  border-radius: 7px;
+}
+
+.ticket-detail__header-left .ticket-detail__status-badge {
+  line-height: 1.2;
+  padding: 0.18rem 0.62rem;
 }
 
 
@@ -2888,7 +2948,7 @@
 }
 
 .ticket-detail__title-wrap {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0;
 }
 
 .td-epic-picker {
@@ -3306,7 +3366,7 @@
   justify-content: center;
   font-size: 0.7rem;
   font-weight: 700;
-  color: #475569;
+  letter-spacing: 0.02em;
 }
 
 .ticket-detail__comment-attachment {
@@ -3376,6 +3436,56 @@
   font-size: 0.82rem;
 }
 
+/* File-type badge colors — must come after base thumb/file styles */
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--pdf,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--pdf {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+}
+
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--doc,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--doc {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #2563eb;
+}
+
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--xls,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--xls {
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  color: #059669;
+}
+
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--csv,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--csv {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #16a34a;
+}
+
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--txt,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--txt {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+}
+
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--img,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--img {
+  background: #faf5ff;
+  border: 1px solid #d8b4fe;
+  color: #7c3aed;
+}
+
+.ticket-detail__attachment-thumb.ticket-detail__attachment-thumb--placeholder--file,
+.ticket-detail__comment-attachment-file.ticket-detail__comment-attachment-file--file {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+}
+
 .ticket-detail__comment-attachment-missing {
   margin: 0.35rem 0 0;
   color: #ef4444;
@@ -3393,8 +3503,8 @@
 }
 
 .ticket-detail__preview-modal {
-  width: min(900px, 92vw);
-  height: min(720px, 88vh);
+  width: min(960px, 94vw);
+  height: min(760px, 90vh);
   background: #fff;
   border-radius: 12px;
   overflow: hidden;
@@ -3423,6 +3533,62 @@
   justify-content: center;
   background: #f8fafc;
   padding: 0.75rem;
+  min-height: 0;
+}
+
+.ticket-detail__preview-body--scroll {
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: auto;
+}
+
+.ticket-detail__preview-text {
+  width: 100%;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #0f172a;
+}
+
+.ticket-detail__preview-table-wrap {
+  width: 100%;
+  overflow: auto;
+}
+
+.ticket-detail__preview-sheet-name {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.ticket-detail__preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 0.82rem;
+}
+
+.ticket-detail__preview-table th,
+.ticket-detail__preview-table td {
+  border: 1px solid #e2e8f0;
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ticket-detail__preview-table th {
+  background: #f1f5f9;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
 }
 
 .ticket-detail__preview-image {
@@ -4301,6 +4467,31 @@
 
 .ticket-detail__comment-rich-content span[data-attachment-name]:hover {
   background: #e0e7ff;
+}
+
+.ticket-detail__comment-rich-content p {
+  margin: 0.35rem 0;
+}
+
+.ticket-detail__comment-rich-content p:first-child {
+  margin-top: 0;
+}
+
+.ticket-detail__comment-rich-content p:last-child {
+  margin-bottom: 0;
+}
+
+.ticket-detail__comment-rich-content ul,
+.ticket-detail__comment-rich-content ol {
+  list-style-position: outside;
+}
+
+.ticket-detail__comment-rich-content span[data-attachment-missing] {
+  cursor: not-allowed;
+  opacity: 0.75;
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
 }
 
 .ticket-detail__comment-rich-content img[data-attachment-missing] {

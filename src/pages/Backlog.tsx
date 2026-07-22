@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import { TicketDetailModal } from '../components/TicketDetailModal';
 import type { IssueType, Ticket, TicketStatus } from '../types/ticket';
@@ -131,19 +131,30 @@ function TicketRow({ ticket, onClick, nested, foldable, subtasksExpanded, onTogg
   const statusColor = STATUS_COLORS[ticket.status];
   const assignees = ticket.assignees ?? (ticket.assignee ? [ticket.assignee] : []);
   const displayLabels = labelsForIssueType(ticket.issueType, ticket.labels);
+
+  /**
+   * Real <a> (via Link) so right-click / Cmd-click / middle-click give the browser's
+   * native "open in new tab". Only intercept plain-left-clicks to keep the existing
+   * in-app modal behavior; everything else is left to the browser.
+   */
+  function handleLinkClick(e: React.MouseEvent) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onClick();
+  }
+
   return (
-    <div
+    <Link
+      to={`/ticket/${ticket.id}`}
       className={`bl-row ${nested ? 'bl-row--nested' : ''}`}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && onClick()}
+      onClick={handleLinkClick}
     >
       {!nested && foldable && onToggleFold ? (
         <button
           type="button"
           className="bl-row__fold"
           onClick={(e) => {
+            e.preventDefault();
             e.stopPropagation();
             onToggleFold();
           }}
@@ -184,7 +195,7 @@ function TicketRow({ ticket, onClick, nested, foldable, subtasksExpanded, onTogg
         {assignees.length > 0 ? assignees.map((a) => <Avatar key={a} name={a} />) : <span className="bl-row__unassigned">—</span>}
       </span>
       <span className="bl-row__points">{ticket.storyPoints ?? <span style={{ opacity: 0.3 }}>—</span>}</span>
-    </div>
+    </Link>
   );
 }
 
