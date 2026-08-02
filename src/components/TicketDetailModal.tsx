@@ -284,7 +284,7 @@ function CodeLinkRow({
           {(() => {
             const rel = formatRelativeAgo(link.lastActivityAt ?? link.createdAt);
             return rel ? (
-              <span className="ticket-detail__code-time" title={link.lastActivityAt ?? link.createdAt}>
+              <span className="ticket-detail__code-time" title={formatAbsoluteActivityTime(link.lastActivityAt ?? link.createdAt)}>
                 {rel}
               </span>
             ) : null;

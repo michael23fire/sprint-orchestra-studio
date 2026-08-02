@@ -12,7 +12,7 @@ import type {
 } from '../api';
 import './Code.css';
 import { normalizeGithubAccountInput } from '../utils/githubAccount';
-import { formatRelativeAgo, formatRelativeAgoOrNever } from '../utils/relativeTime';
+import { formatRelativeAgo, formatRelativeAgoOrNever, formatAbsoluteActivityTime } from '../utils/relativeTime';
 
 const KIND_META: Record<'pull_request', { icon: string; label: string; badge: string }> = {
   pull_request: { icon: '⇅', label: 'Pull requests linked to issues', badge: 'PR' },
@@ -633,7 +633,7 @@ export function Code() {
                         )}
                         {(() => {
                           const rel = formatRelativeAgo(l.lastActivityAt ?? l.createdAt);
-                          return rel ? <span className="code-row-time" title={l.lastActivityAt ?? l.createdAt}>{rel}</span> : null;
+                          return rel ? <span className="code-row-time" title={formatAbsoluteActivityTime(l.lastActivityAt ?? l.createdAt)}>{rel}</span> : null;
                         })()}
                       </div>
                     </div>
