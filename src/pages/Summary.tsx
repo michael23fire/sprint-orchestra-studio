@@ -5,6 +5,7 @@ import { effectiveSpaceMemberIds } from '../types/space';
 import { useCurrentUser } from '../context/UserContext';
 import type { IssueType, TicketPriority, TicketStatus } from '../types/ticket';
 import { ISSUE_TYPE_META } from '../types/ticket';
+import { parseDueDate } from '../utils/dueDate';
 import './Summary.css';
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
@@ -236,8 +237,8 @@ export function Summary() {
     next7.setDate(now.getDate() + 7);
     return tickets.filter((t) => {
       if (!t.dueDate || t.status === 'done') return false;
-      const d = new Date(t.dueDate);
-      if (Number.isNaN(d.getTime())) return false;
+      const d = parseDueDate(t.dueDate);
+      if (!d) return false;
       d.setHours(0, 0, 0, 0);
       return d >= now && d <= next7;
     }).length;

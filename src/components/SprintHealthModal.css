@@ -1,0 +1,231 @@
+/* Self-contained, same convention/caveat as PlanEpicModal.css and AskAiPanel.css. */
+
+.bl-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.bl-modal {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+  width: 100%;
+  max-width: 28rem;
+  overflow: hidden;
+}
+
+.bl-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.bl-modal__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.bl-modal__close {
+  border: none;
+  background: transparent;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #64748b;
+  font-size: 1rem;
+}
+
+.bl-modal__close:hover { background: #f1f5f9; }
+
+.bl-modal__body {
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.bl-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.15rem;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.bl-btn {
+  padding: 0.45rem 0.9rem;
+  border-radius: 7px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+
+.bl-btn--primary {
+  background: #4f46e5;
+  color: #fff;
+}
+
+/* Feature-specific ("sh-" = Sprint Health) */
+
+.sh-modal.bl-modal {
+  width: min(38rem, 94vw);
+  max-width: min(38rem, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.sh-body {
+  overflow-y: auto;
+}
+
+.sh-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.sh-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sh-badge--ok { background: #dcfce7; color: #15803d; }
+.sh-badge--warn { background: #fef3c7; color: #b45309; }
+.sh-badge--danger { background: #fee2e2; color: #b91c1c; }
+
+.sh-stat {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.sh-stat--muted {
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.sh-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.sh-spinner {
+  display: inline-block;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: none;
+  border: 2.5px solid #c7d2fe;
+  border-top-color: #4f46e5;
+  border-radius: 50%;
+  animation: sh-spin 0.7s linear infinite;
+}
+
+@keyframes sh-spin {
+  to { transform: rotate(360deg); }
+}
+
+.sh-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.9rem 0.2rem;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.sh-hint--warn {
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+}
+
+.sh-error {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #dc2626;
+}
+
+.sh-summary {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: #0f172a;
+}
+
+.sh-recommendations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.sh-recommendations__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #94a3b8;
+}
+
+.sh-recommendations ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: #334155;
+  line-height: 1.6;
+}
+
+.sh-flagged {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.sh-flagged__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.sh-flagged__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #94a3b8;
+}
+
+.sh-flagged__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: #334155;
+}
+
+.sh-flagged__detail {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
