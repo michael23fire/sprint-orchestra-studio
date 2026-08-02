@@ -5364,6 +5364,22 @@
   background: #e2e8f0;
 }
 
+.modal__btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: modal-btn-spin 0.7s linear infinite;
+}
+
+@keyframes modal-btn-spin {
+  to { transform: rotate(360deg); }
+}
+
 .modal__btn--confirm {
   background: linear-gradient(135deg, var(--color-primary), #7c3aed);
   color: #fff;

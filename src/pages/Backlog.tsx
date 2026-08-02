@@ -8,6 +8,8 @@ import { labelColor, labelsForIssueType } from '../types/ticket';
 import type { Sprint, SprintStatus, SprintReorderAction } from '../types/sprint';
 import { BoardAssigneeFilter } from '../components/BoardAssigneeFilter';
 import { CompleteSprintModal } from '../components/CompleteSprintModal';
+import { PlanEpicModal } from '../components/PlanEpicModal';
+import { SprintHealthModal } from '../components/SprintHealthModal';
 import { IssueFilterPanel } from '../components/IssueFilterPanel';
 import { useCurrentUser } from '../context/UserContext';
 import { useSpaces } from '../context/SpaceContext';
@@ -306,8 +308,12 @@ interface StartSprintModalProps {
 }
 
 function StartSprintModal({ sprint, tickets, allSprints, onConfirm, onClose }: StartSprintModalProps) {
-  const today = new Date().toISOString().slice(0, 10);
-  const twoWeeks = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+  const toLocalIsoDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = toLocalIsoDate(new Date());
+  const twoWeeksDate = new Date();
+  twoWeeksDate.setDate(twoWeeksDate.getDate() + 14);
+  const twoWeeks = toLocalIsoDate(twoWeeksDate);
   const [startDate, setStartDate] = useState(sprint.startDate || today);
   const [endDate, setEndDate] = useState(sprint.endDate || twoWeeks);
   const [goal, setGoal] = useState(sprint.goal ?? '');
@@ -610,6 +616,7 @@ interface SprintSectionProps {
   onToggle: () => void;
   onStartSprint: () => void;
   onCompleteSprint: () => void;
+  onHealthCheck?: () => void;
   onEditSprint: () => void;
   onDeleteSprint: () => void;
   onReorderSprint?: (action: SprintReorderAction) => void;
@@ -765,7 +772,7 @@ function SprintEstimateBadges({ tickets }: { tickets: Ticket[] }) {
 
 function SprintSection({
   sprint, rootTickets, statsTickets, allTickets, collapsedParents, onToggleParentFold, isCollapsed, onToggle,
-  onStartSprint, onCompleteSprint, onEditSprint, onDeleteSprint, onReorderSprint, canMoveUp, canMoveDown,
+  onStartSprint, onCompleteSprint, onHealthCheck, onEditSprint, onDeleteSprint, onReorderSprint, canMoveUp, canMoveDown,
   startDisabledReason, onCreateIssue, onTicketClick,
   isCreating, onSaveIssue, onCancelCreate,
 }: SprintSectionProps) {
@@ -841,6 +848,11 @@ function SprintSection({
               title={startDisabledReason ?? undefined}
             >
               Start sprint
+            </button>
+          )}
+          {sprint.status === 'active' && onHealthCheck && (
+            <button type="button" className="bl-btn bl-btn--outline bl-btn--sm" onClick={onHealthCheck}>
+              🩺 AI health check
             </button>
           )}
           {sprint.status === 'active' && (
@@ -1018,6 +1030,7 @@ export function Backlog() {
     applyBacklogRank,
     addComment, editComment, deleteComment, addIssueLink, deleteIssueLink,
     addCodeLink, deleteCodeLink, refreshCodeLinks, hydrateIssueDetail,
+    refreshData,
   } = useTickets();
   const [searchParams, setSearchParams] = useSearchParams();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(['completed']));
@@ -1025,6 +1038,8 @@ export function Backlog() {
   const [startingSprintId, setStartingSprintId] = useState<string | null>(null);
   const [editingSprintId, setEditingSprintId] = useState<string | null>(null);
   const [completingSprintId, setCompletingSprintId] = useState<string | null>(null);
+  const [showPlanEpicModal, setShowPlanEpicModal] = useState(false);
+  const [healthCheckSprintId, setHealthCheckSprintId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [topLevelOnly, setTopLevelOnly] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
@@ -1318,6 +1333,7 @@ export function Backlog() {
         onToggle={() => toggleCollapse(sprint.id)}
         onStartSprint={() => setStartingSprintId(sprint.id)}
         onCompleteSprint={() => setCompletingSprintId(sprint.id)}
+        onHealthCheck={sprint.status === 'active' ? () => setHealthCheckSprintId(sprint.id) : undefined}
         onEditSprint={() => setEditingSprintId(sprint.id)}
         onDeleteSprint={() => handleDeleteSprint(sprint.id)}
         onReorderSprint={isFuture ? (action) => reorderSprint(sprint.id, action) : undefined}
@@ -1386,6 +1402,26 @@ export function Backlog() {
         />
       )}
 
+      {showPlanEpicModal && (
+        <PlanEpicModal
+          spaceId={Number(currentSpace.id)}
+          sprints={sprints}
+          onCommitted={() => refreshData()}
+          onClose={() => setShowPlanEpicModal(false)}
+        />
+      )}
+
+      {healthCheckSprintId && (() => {
+        const healthSprint = sprints.find((s) => s.id === healthCheckSprintId);
+        return healthSprint ? (
+          <SprintHealthModal
+            sprint={healthSprint}
+            tickets={tickets}
+            onClose={() => setHealthCheckSprintId(null)}
+          />
+        ) : null;
+      })()}
+
       <div className="bl-toolbar">
         <input
           type="search"
@@ -1424,7 +1460,10 @@ export function Backlog() {
             <span>Show subtasks</span>
           </button>
         </div>
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+          <button type="button" className="bl-btn bl-btn--outline" onClick={() => setShowPlanEpicModal(true)}>
+            ✨ Plan Epic with AI
+          </button>
           <button type="button" className="bl-btn bl-btn--primary" onClick={handleCreateSprint}>
             + Create Sprint
           </button>
