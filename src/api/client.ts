@@ -159,4 +159,9 @@ export const api = {
     const res = await raw(path);
     return res.blob();
   },
+  /** Auth'd POST returning the raw `Response`, body untouched — for `text/event-stream` endpoints
+   *  where the caller needs `res.body`'s `ReadableStream` instead of a parsed JSON result (see
+   *  aiApi.askStream). Everything else (base URL, Bearer token, 401 handling) matches `api.post`. */
+  postStream: (path: string, body?: unknown) =>
+    raw(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }),
 };
