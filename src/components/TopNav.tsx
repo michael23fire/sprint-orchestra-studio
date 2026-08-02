@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCurrentUser } from '../context/UserContext';
 import { CreateTaskModal } from './CreateTaskModal';
+import { AskAiPanel } from './AskAiPanel';
 import { IssueQuickSearch } from './IssueQuickSearch';
 
 export function TopNav() {
@@ -9,6 +10,7 @@ export function TopNav() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAskAi, setShowAskAi] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,6 +39,9 @@ export function TopNav() {
         <IssueQuickSearch />
         <button type="button" className="top-nav__create" onClick={() => setShowCreate(true)}>
           Create
+        </button>
+        <button type="button" className="top-nav__create" onClick={() => setShowAskAi(true)}>
+          ✨ Ask AI
         </button>
         <div className="top-nav__actions">
           <div className="user-menu" ref={menuRef}>
@@ -82,6 +87,7 @@ export function TopNav() {
       </header>
 
       {showCreate && <CreateTaskModal onClose={() => setShowCreate(false)} />}
+      {showAskAi && <AskAiPanel onClose={() => setShowAskAi(false)} />}
     </>
   );
 }
