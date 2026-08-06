@@ -391,4 +391,69 @@ export const aiApi = {
   retryRollout: (threadId: string) =>
     api.post<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}/retry`),
 
+  /** Starts a sprint-recovery diagnosis workflow. Runs to the first pause — either a clarifying
+   *  question (confidence-gated) or a full set of recovery plans (awaiting_plan_approval). */
+  startSprintRecovery: (spaceId: number, sprintId: number, sprintName: string) =>
+    api.post<RecoveryStatusDto>('/api/ai/sprint-recovery/start', { spaceId, sprintId, sprintName }),
+  /** SSE variant of `startSprintRecovery` — `onStage` fires ("detecting risk signals and analyzing
+   *  evidence", "generating recovery plans") as `diagnose_node`/`plan_node` are reached; a fresh
+   *  diagnosis can chain through both in one call. See ai-service's `POST /sprint-recovery/start/stream`. */
+  startSprintRecoveryStream: (spaceId: number, sprintId: number, sprintName: string, onStage?: (label: string) => void) =>
+    consumeStageStream<RecoveryStatusDto>('/api/ai/sprint-recovery/start/stream', { spaceId, sprintId, sprintName }, onStage),
+  getSprintRecoveryStatus: (threadId: string) =>
+    api.get<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}`),
+  /** Answers the one specific clarifying question the confidence gate raised — folded in as evidence,
+   *  loops back into diagnosis (bounded by the server-side max_clarification_rounds). */
+  answerSprintRecoveryClarification: (threadId: string, answer: string) =>
+    api.post<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/clarify`, { answer }),
+  /** SSE variant of `answerSprintRecoveryClarification` — same stage events as the start stream, since
+   *  answering can chain straight from `diagnose_node` into `plan_node` again on a confident pass. */
+  answerSprintRecoveryClarificationStream: (threadId: string, answer: string, onStage?: (label: string) => void) =>
+    consumeStageStream<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/clarify/stream`, { answer }, onStage),
+  submitSprintRecoveryDecision: (
+    threadId: string,
+    decision: 'approve' | 'edit' | 'reject' | 'revise',
+    planId?: string,
+    actions?: RecoveryActionDto[],
+    feedback?: string,
+  ) =>
+    api.post<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/decision`, {
+      decision,
+      planId: decision === 'approve' || decision === 'edit' ? planId : undefined,
+      actions: decision === 'edit' ? actions : undefined,
+      feedback: decision === 'revise' ? feedback : undefined,
+    }),
+  /** SSE variant of `submitSprintRecoveryDecision` — only `revise` ever emits a `stage` event (it's
+   *  the only decision that re-enters `plan_node`, a real LLM call), but every decision goes through
+   *  this so the caller has one code path regardless of which button was clicked. */
+  submitSprintRecoveryDecisionStream: (
+    threadId: string,
+    decision: 'approve' | 'edit' | 'reject' | 'revise',
+    planId?: string,
+    actions?: RecoveryActionDto[],
+    feedback?: string,
+    onStage?: (label: string) => void,
+  ) =>
+    consumeStageStream<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/decision/stream`, {
+      decision,
+      planId: decision === 'approve' || decision === 'edit' ? planId : undefined,
+      actions: decision === 'edit' ? actions : undefined,
+      feedback: decision === 'revise' ? feedback : undefined,
+    }, onStage),
+  /** Un-sticks a workflow at status='committing' (a suspected crash) or 'failed' (jira-backend was
+   *  briefly unreachable while ai-service stayed up) — same two-case split as retryRollout, applied
+   *  to a heterogeneous 4-action-type execution instead of a single homogeneous "create issue" one. */
+  retrySprintRecovery: (threadId: string) =>
+    api.post<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/retry`),
+  /** The manual half of the "human or Kafka event, identical resume protocol" wait — a real
+   *  IssueContentChangedEvent calls the same underlying resume from kafka_trigger.py instead. */
+  triggerSprintRecoveryReevaluation: (threadId: string) =>
+    api.post<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/trigger-reevaluation`),
+  getSprintRecoveryHistory: (threadId: string) =>
+    api.get<RecoveryCheckpointDto[]>(`/api/ai/sprint-recovery/${threadId}/history`),
+  /** Rewinds to an earlier checkpoint (from getSprintRecoveryHistory) and continues forward from
+   *  there with `note` folded in as if a human had just answered a clarifying question at that point
+   *  — rewrites this thread's own forward history, verified live not to fork a separate thread. */
+  timeTravelSprintRecovery: (threadId: string, checkpointId: string, note: string) =>
+    api.post<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/time-travel`, { checkpointId, note }),
 };
