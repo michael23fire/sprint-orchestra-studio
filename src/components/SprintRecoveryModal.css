@@ -1,0 +1,419 @@
+.sr-modal.bl-modal {
+  width: 720px;
+  max-width: 94vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+
+.sr-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sr-badge--diagnosing, .sr-badge--awaiting_clarification { background: #eff6ff; color: #2563eb; }
+.sr-badge--awaiting_plan_approval { background: #eff6ff; color: #2563eb; }
+.sr-badge--committing, .sr-badge--waiting_reevaluation { background: #fefce8; color: #ca8a04; }
+.sr-badge--recovered { background: #f0fdf4; color: #16a34a; }
+.sr-badge--escalated { background: #fef2f2; color: #dc2626; }
+
+.sr-escalation {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.sr-escalation__title {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #991b1b;
+}
+
+.sr-escalation__body {
+  margin: 0;
+  font-size: 0.83rem;
+  line-height: 1.55;
+  color: #7f1d1d;
+}
+.sr-badge--rejected { background: #f1f5f9; color: #64748b; }
+.sr-badge--failed { background: #fef2f2; color: #dc2626; }
+
+/* --- waiting indicator: no SSE on this path, this is the cheap substitute (see component docstring) --- */
+.sr-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: sr-spin 0.7s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes sr-spin {
+  to { transform: rotate(360deg); }
+}
+
+.sr-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.sr-waiting--local {
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 4px 10px;
+  border-radius: 6px;
+  align-self: flex-start;
+}
+
+.sr-clarify {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.sr-question {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.sr-section-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  margin: 4px 0 6px;
+  padding-top: 6px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.sr-hypotheses {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sr-hyp-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.sr-hyp-card__top {
+  margin-bottom: 4px;
+}
+
+.sr-hyp-card__statement {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: #1e293b;
+}
+
+.sr-conf--high { background: #f0fdf4; color: #16a34a; }
+.sr-conf--medium { background: #fefce8; color: #ca8a04; }
+.sr-conf--low { background: #fef2f2; color: #dc2626; }
+
+.sr-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+/* Custom hover tooltip — deliberately NOT the native `title` attribute: browsers delay it ~1s and it's
+   easy to hover-and-move before it appears, which read as "hovering does nothing." This renders
+   instantly and visibly instead. */
+.sr-tooltip {
+  position: relative;
+  cursor: help;
+}
+
+.sr-tooltip:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 6px 9px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  width: max-content;
+  max-width: 320px;
+  z-index: 30;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.28);
+  pointer-events: none;
+}
+
+.sr-cite-chip {
+  background: #f1f5f9;
+  color: #64748b;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-family: ui-monospace, monospace;
+}
+
+.sr-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sr-plan {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.sr-plan__header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.sr-plan__name {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.sr-plan__rationale {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.sr-plan__impact {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.sr-plan__impact b {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.sr-actions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sr-actions li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.83rem;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.sr-actions li.sr-action--done {
+  background: #f0fdf4;
+}
+
+.sr-action__done-mark {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.sr-action-chip {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.sr-action-chip--link_dependency { background: #eff6ff; color: #2563eb; }
+.sr-action-chip--change_priority { background: #fefce8; color: #ca8a04; }
+.sr-action-chip--move_out_of_sprint { background: #fef2f2; color: #dc2626; }
+.sr-action-chip--add_comment { background: #f1f5f9; color: #64748b; }
+
+.sr-action__body {
+  color: #334155;
+  line-height: 1.5;
+}
+
+.sr-action__body code {
+  background: #eef2f7;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+
+.sr-action__comment {
+  display: block;
+  color: #64748b;
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.sr-plan__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sr-history {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sr-history__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.sr-history__label {
+  font-size: 0.82rem;
+  color: #1e293b;
+}
+
+.sr-history__raw {
+  font-size: 0.68rem;
+  font-family: ui-monospace, monospace;
+  color: #cbd5e1;
+}
+
+.sr-hint-tight {
+  margin-top: -4px;
+}
+
+.sr-hint-tight code {
+  background: #f1f5f9;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+
+.sr-evidence {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.sr-evidence__summary {
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  border-top: none;
+  user-select: none;
+}
+
+.sr-evidence__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  /* Expanding shouldn't be able to blow the whole modal out to 41 items' worth of height — this list
+     scrolls internally, the <details> element itself still collapses/expands normally. */
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.sr-evidence__item {
+  border-top: 1px solid #f1f5f9;
+  padding-top: 8px;
+  opacity: 0.7;
+}
+
+.sr-evidence__item--cited {
+  opacity: 1;
+}
+
+.sr-evidence__cited-badge {
+  margin-left: 6px;
+  background: #f0fdf4;
+  color: #16a34a;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.sr-evidence__meta {
+  margin-left: 6px;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.sr-evidence__content {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: #334155;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.sr-revise {
+  border-top: 1px dashed #e2e8f0;
+  margin-top: 4px;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sr-revise__label {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.sr-revise__label--limit {
+  background: #fefce8;
+  color: #854d0e;
+  padding: 8px 10px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+.sr-revise__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
