@@ -10,6 +10,7 @@ import { BoardAssigneeFilter } from '../components/BoardAssigneeFilter';
 import { CompleteSprintModal } from '../components/CompleteSprintModal';
 import { PlanEpicModal } from '../components/PlanEpicModal';
 import { RolloutModal } from '../components/RolloutModal';
+import { SprintRecoveryModal } from '../components/SprintRecoveryModal';
 import { SprintHealthModal } from '../components/SprintHealthModal';
 import { IssueFilterPanel } from '../components/IssueFilterPanel';
 import { useCurrentUser } from '../context/UserContext';
@@ -618,6 +619,7 @@ interface SprintSectionProps {
   onStartSprint: () => void;
   onCompleteSprint: () => void;
   onHealthCheck?: () => void;
+  onRecoveryCheck?: () => void;
   onEditSprint: () => void;
   onDeleteSprint: () => void;
   onReorderSprint?: (action: SprintReorderAction) => void;
@@ -773,7 +775,7 @@ function SprintEstimateBadges({ tickets }: { tickets: Ticket[] }) {
 
 function SprintSection({
   sprint, rootTickets, statsTickets, allTickets, collapsedParents, onToggleParentFold, isCollapsed, onToggle,
-  onStartSprint, onCompleteSprint, onHealthCheck, onEditSprint, onDeleteSprint, onReorderSprint, canMoveUp, canMoveDown,
+  onStartSprint, onCompleteSprint, onHealthCheck, onRecoveryCheck, onEditSprint, onDeleteSprint, onReorderSprint, canMoveUp, canMoveDown,
   startDisabledReason, onCreateIssue, onTicketClick,
   isCreating, onSaveIssue, onCancelCreate,
 }: SprintSectionProps) {
@@ -854,6 +856,11 @@ function SprintSection({
           {sprint.status === 'active' && onHealthCheck && (
             <button type="button" className="bl-btn bl-btn--outline bl-btn--sm" onClick={onHealthCheck}>
               🩺 AI health check
+            </button>
+          )}
+          {sprint.status === 'active' && onRecoveryCheck && (
+            <button type="button" className="bl-btn bl-btn--outline bl-btn--sm" onClick={onRecoveryCheck}>
+              🚑 AI recovery
             </button>
           )}
           {sprint.status === 'active' && (
@@ -1042,6 +1049,7 @@ export function Backlog() {
   const [showPlanEpicModal, setShowPlanEpicModal] = useState(false);
   const [showRolloutModal, setShowRolloutModal] = useState(false);
   const [healthCheckSprintId, setHealthCheckSprintId] = useState<string | null>(null);
+  const [recoveryCheckSprintId, setRecoveryCheckSprintId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [topLevelOnly, setTopLevelOnly] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
@@ -1336,6 +1344,7 @@ export function Backlog() {
         onStartSprint={() => setStartingSprintId(sprint.id)}
         onCompleteSprint={() => setCompletingSprintId(sprint.id)}
         onHealthCheck={sprint.status === 'active' ? () => setHealthCheckSprintId(sprint.id) : undefined}
+        onRecoveryCheck={sprint.status === 'active' ? () => setRecoveryCheckSprintId(sprint.id) : undefined}
         onEditSprint={() => setEditingSprintId(sprint.id)}
         onDeleteSprint={() => handleDeleteSprint(sprint.id)}
         onReorderSprint={isFuture ? (action) => reorderSprint(sprint.id, action) : undefined}
@@ -1428,6 +1437,18 @@ export function Backlog() {
             sprint={healthSprint}
             tickets={tickets}
             onClose={() => setHealthCheckSprintId(null)}
+          />
+        ) : null;
+      })()}
+
+      {recoveryCheckSprintId && (() => {
+        const recoverySprint = sprints.find((s) => s.id === recoveryCheckSprintId);
+        return recoverySprint ? (
+          <SprintRecoveryModal
+            spaceId={Number(currentSpace.id)}
+            sprintId={Number(recoverySprint.id)}
+            sprintName={recoverySprint.name}
+            onClose={() => setRecoveryCheckSprintId(null)}
           />
         ) : null;
       })()}
