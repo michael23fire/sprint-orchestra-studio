@@ -332,4 +332,63 @@ export const aiApi = {
    *  + recommendations — never calculates risk itself, see app/sprint_health/schemas.py. */
   sprintHealth: (req: SprintHealthRequestDto) =>
     api.post<SprintHealthResponseDto>('/api/ai/sprint-health', req),
+  /** Starts a durable rollout: generates a plan (same call planEpic makes), then pauses server-side
+   *  for approval. Always returns with status='pending_approval' (or 'failed' if generation itself
+   *  failed) — this call alone never writes anything to Jira. */
+  startRollout: (
+    proposal: string,
+    spaceId: number,
+    existingLabels: string[] = [],
+    sprintCapacityPoints: number | null = null,
+    targetSprintCount: number | null = null,
+  ) =>
+    api.post<RolloutStatusDto>('/api/ai/plan-epic/rollout', {
+      proposal,
+      space_id: spaceId,
+      existing_labels: existingLabels,
+      sprint_capacity_points: sprintCapacityPoints ?? undefined,
+      target_sprint_count: targetSprintCount ?? undefined,
+    }),
+  /** SSE variant of `startRollout` — `onStage` fires once ("generating the rollout plan") since
+   *  `plan_node` is the only LLM call this graph makes on start; still worth it since that call is the
+   *  entire wait. See ai-service's `POST /plan-epic/rollout/stream`. */
+  startRolloutStream: (
+    proposal: string,
+    spaceId: number,
+    existingLabels: string[] = [],
+    sprintCapacityPoints: number | null = null,
+    targetSprintCount: number | null = null,
+    onStage?: (label: string) => void,
+  ) =>
+    consumeStageStream<RolloutStatusDto>('/api/ai/plan-epic/rollout/stream', {
+      proposal,
+      space_id: spaceId,
+      existing_labels: existingLabels,
+      sprint_capacity_points: sprintCapacityPoints ?? undefined,
+      target_sprint_count: targetSprintCount ?? undefined,
+    }, onStage),
+  /** Reads current status (a Postgres read via the checkpointer, no node re-execution) — safe to poll,
+   *  and the way to check whether a rollout survived an ai-service restart while paused/committing. */
+  getRolloutStatus: (threadId: string) =>
+    api.get<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}`),
+  /** Resumes a paused rollout with a human decision (`Command(resume=...)` server-side). `edit`
+   *  requires the caller's modified epic+issues; `approve`/`reject` ignore them if present. Runs the
+   *  commit loop to completion (or failure) before returning. */
+  submitRolloutDecision: (
+    threadId: string,
+    decision: 'approve' | 'edit' | 'reject',
+    edited?: { epic: EpicDraftDto; issues: IssueDraftDto[] },
+  ) =>
+    api.post<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}/decision`, {
+      decision,
+      epic: decision === 'edit' ? edited?.epic : undefined,
+      issues: decision === 'edit' ? edited?.issues : undefined,
+    }),
+  /** Retries a rollout stuck at status='failed' from a *clean* failure — jira-backend was briefly
+   *  unreachable while ai-service itself stayed up (a real process crash mid-commit needs no explicit
+   *  retry call; it self-resumes from the same checkpoint the next time this thread is touched). Only
+   *  valid when status is 'failed' — a 409 otherwise. Never re-creates whatever already succeeded. */
+  retryRollout: (threadId: string) =>
+    api.post<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}/retry`),
+
 };
