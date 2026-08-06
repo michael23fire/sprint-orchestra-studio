@@ -8,6 +8,43 @@ import { api } from './client';
  * ai-service directly with an open CORS policy meant only for local backend-only testing.
  */
 
+/** Consumes a `text/event-stream` response shaped as `event: <name>\ndata: <json>\n\n` frames — the
+ *  "stage progress labels, not token streaming" pattern every SSE endpoint in this codebase follows
+ *  (see ai-service/app/api/routes.py's `POST /ask/stream` docstring for why: structured/Instructor
+ *  outputs can't be meaningfully streamed token-by-token, so this streams *checkpoint* labels instead,
+ *  resolving once a `result` frame arrives). Shared by `askStream` and the sprint-recovery stream
+ *  variants below rather than duplicating this parser per endpoint. */
+async function consumeStageStream<T>(path: string, body: unknown, onStage?: (label: string) => void): Promise<T> {
+  const res = await api.postStream(path, body);
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('Streaming is not supported in this browser.');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE frames are separated by a blank line.
+    let sepIndex = buffer.indexOf('\n\n');
+    while (sepIndex !== -1) {
+      const frame = buffer.slice(0, sepIndex);
+      buffer = buffer.slice(sepIndex + 2);
+      const lines = frame.split('\n');
+      const eventLine = lines.find((l) => l.startsWith('event: '));
+      const dataLine = lines.find((l) => l.startsWith('data: '));
+      if (eventLine && dataLine) {
+        const eventName = eventLine.slice('event: '.length);
+        const data = JSON.parse(dataLine.slice('data: '.length));
+        if (eventName === 'stage') onStage?.(data.label as string);
+        else if (eventName === 'result') return data as T;
+        else if (eventName === 'error') throw new Error((data.detail as string) ?? 'request failed');
+      }
+      sepIndex = buffer.indexOf('\n\n');
+    }
+  }
+  throw new Error('Stream ended before a result arrived.');
+}
+
 export type IssueType = 'bug' | 'task' | 'story';
 
 export interface TaskDraftDto {
@@ -186,41 +223,8 @@ export const aiApi = {
    *  of the caller seeing nothing until the whole answer is ready. Resolves with the same
    *  `AskResponseDto` `ask()` returns once the backend's "result" event arrives. See
    *  ai-service/app/api/routes.py's `POST /ask/stream` and `CragAgent.ask`'s `on_stage` parameter. */
-  askStream: async (
-    question: string,
-    spaceIds: number[],
-    history: ChatTurnDto[] = [],
-    onStage?: (label: string) => void,
-  ): Promise<AskResponseDto> => {
-    const res = await api.postStream('/api/ai/ask/stream', { question, space_ids: spaceIds, history });
-    const reader = res.body?.getReader();
-    if (!reader) throw new Error('Streaming is not supported in this browser.');
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // SSE frames are separated by a blank line.
-      let sepIndex = buffer.indexOf('\n\n');
-      while (sepIndex !== -1) {
-        const frame = buffer.slice(0, sepIndex);
-        buffer = buffer.slice(sepIndex + 2);
-        const lines = frame.split('\n');
-        const eventLine = lines.find((l) => l.startsWith('event: '));
-        const dataLine = lines.find((l) => l.startsWith('data: '));
-        if (eventLine && dataLine) {
-          const eventName = eventLine.slice('event: '.length);
-          const data = JSON.parse(dataLine.slice('data: '.length));
-          if (eventName === 'stage') onStage?.(data.label as string);
-          else if (eventName === 'result') return data as AskResponseDto;
-          else if (eventName === 'error') throw new Error((data.detail as string) ?? 'ask failed');
-        }
-        sepIndex = buffer.indexOf('\n\n');
-      }
-    }
-    throw new Error('Stream ended before a result arrived.');
-  },
+  askStream: (question: string, spaceIds: number[], history: ChatTurnDto[] = [], onStage?: (label: string) => void) =>
+    consumeStageStream<AskResponseDto>('/api/ai/ask/stream', { question, space_ids: spaceIds, history }, onStage),
   /** Retrieval only, no LLM — ranked issues (deduped, best chunk per issue), not a generated answer.
    *  Backs both the "find related issues" search mode and duplicate-issue detection. */
   search: (query: string, spaceIds: number[], limit = 10) =>
