@@ -44,6 +44,17 @@ export type {
   SprintRiskLevel,
   SprintHealthRequestDto,
   SprintHealthResponseDto,
+  RolloutStatus,
+  RolloutPlanDto,
+  RolloutStatusDto,
+  RecoveryStatus,
+  RecoveryActionType,
+  RecoveryActionDto,
+  RecoveryPlanDto,
+  RecoveryHypothesisDto,
+  RecoveryEvidenceDto,
+  RecoveryStatusDto,
+  RecoveryCheckpointDto,
 } from './aiApi';
 export type {
   SpaceGithubRepoDto,

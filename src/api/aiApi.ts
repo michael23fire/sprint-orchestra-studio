@@ -173,6 +173,105 @@ export interface SprintHealthResponseDto {
   latencySeconds: number;
 }
 
+/**
+ * Sprint recovery: diagnose -> grounded root-cause hypotheses -> confidence-gated clarification ->
+ * concrete recovery plans -> durable human approval -> idempotent multi-action execution -> wait for
+ * a real Jira event (or a manual re-check) -> re-evaluate -> escalate/replan or close. See
+ * ai-service/app/sprint_recovery/graph.py's module docstring for the full design rationale — this is
+ * a genuinely different LangGraph shape than epic rollout: 3 differently-shaped pauses (not 1), a
+ * conditional replan loop bounded by an escalation cap, and re-entry driven by a real Kafka event as
+ * well as by a human.
+ */
+// 'revising' is transient server-side only (approval_node -> plan_node happens within one HTTP call,
+// same request-response) — included here for structural completeness, never actually observed by a
+// client between calls.
+export type RecoveryStatus =
+  | 'diagnosing' | 'awaiting_clarification' | 'awaiting_plan_approval' | 'committing' | 'committed'
+  | 'waiting_reevaluation' | 'recovered' | 'escalated' | 'rejected' | 'revising' | 'failed';
+
+export type RecoveryActionType = 'link_dependency' | 'change_priority' | 'move_out_of_sprint' | 'add_comment';
+
+export interface RecoveryActionDto {
+  actionType: RecoveryActionType;
+  targetIssueKey: string;
+  dependsOnIssueKey: string | null;
+  newPriority: string | null;
+  commentBody: string | null;
+}
+
+export interface RecoveryPlanDto {
+  planId: string;
+  name: string;
+  rationale: string;
+  impactOnGoal: string;
+  actions: RecoveryActionDto[];
+}
+
+export interface RecoveryHypothesisDto {
+  statement: string;
+  confidence: 'high' | 'medium' | 'low';
+  supportingEvidenceIds: string[];
+}
+
+export interface RecoveryEvidenceDto {
+  citationId: string;
+  issueKey: string;
+  sourceType: 'comment' | 'attachment' | 'history' | 'description' | 'structured';
+  content: string;
+}
+
+export interface RecoveryStatusDto {
+  threadId: string;
+  status: RecoveryStatus;
+  riskSignalCount: number;
+  evidence: RecoveryEvidenceDto[];
+  hypotheses: RecoveryHypothesisDto[];
+  clarificationQuestion: string | null;
+  plans: RecoveryPlanDto[];
+  committedActions: Record<string, string>;
+  escalationRound: number;
+  planRevisionRound: number;
+  maxPlanRevisionRounds: number;
+  tokenUsage: number;
+  error: string | null;
+  // Only ever populated when status === 'escalated' — a plain-English "what we tried across every
+  // escalation round, and why the risk signals still didn't clear" synthesis.
+  escalationSummary: string | null;
+}
+
+export interface RecoveryCheckpointDto {
+  checkpointId: string;
+  nextNode: string | null;
+  status: string | null;
+}
+
+/**
+ * Epic rollout: a durable, human-approved commit-to-Jira workflow (see
+ * ai-service/app/planning/rollout_graph.py), distinct from planEpic/refinePlan above — those never
+ * persist anything (the caller commits via issueApi/sprintApi itself, see PlanEpicModal.tsx). This
+ * one pauses server-side (a LangGraph `interrupt()`, checkpointed in Postgres — it survives an
+ * ai-service restart while paused) and, once approved, writes the epic + issues to jira-backend
+ * itself, exactly once each even across a crash mid-commit. Scope, stated plainly: creates a real
+ * epic-type issue + parent-linked child issues; does NOT yet create/assign sprints or the `dependsOn`
+ * issue-link rows PlanEpicModal's own commit flow does — see rollout_graph.py's module docstring.
+ */
+export type RolloutStatus = 'pending_approval' | 'committing' | 'committed' | 'rejected' | 'failed';
+
+export interface RolloutPlanDto {
+  epic: EpicDraftDto | null;
+  issues: IssueDraftDto[];
+  sprintPlan: SprintBucketDto[];
+}
+
+export interface RolloutStatusDto {
+  threadId: string;
+  status: RolloutStatus;
+  plan: RolloutPlanDto | null;
+  epicIssueKey: string | null;
+  committedIssueKeys: Record<string, string>;
+  error: string | null;
+}
+
 export const aiApi = {
   draftTask: (description: string, existingLabels: string[]) =>
     api.post<DraftTaskResponse>('/api/ai/draft-task', {
