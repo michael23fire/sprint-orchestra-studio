@@ -9,6 +9,7 @@ import type { Sprint, SprintStatus, SprintReorderAction } from '../types/sprint'
 import { BoardAssigneeFilter } from '../components/BoardAssigneeFilter';
 import { CompleteSprintModal } from '../components/CompleteSprintModal';
 import { PlanEpicModal } from '../components/PlanEpicModal';
+import { RolloutModal } from '../components/RolloutModal';
 import { SprintHealthModal } from '../components/SprintHealthModal';
 import { IssueFilterPanel } from '../components/IssueFilterPanel';
 import { useCurrentUser } from '../context/UserContext';
@@ -1039,6 +1040,7 @@ export function Backlog() {
   const [editingSprintId, setEditingSprintId] = useState<string | null>(null);
   const [completingSprintId, setCompletingSprintId] = useState<string | null>(null);
   const [showPlanEpicModal, setShowPlanEpicModal] = useState(false);
+  const [showRolloutModal, setShowRolloutModal] = useState(false);
   const [healthCheckSprintId, setHealthCheckSprintId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [topLevelOnly, setTopLevelOnly] = useState(false);
@@ -1411,6 +1413,14 @@ export function Backlog() {
         />
       )}
 
+      {showRolloutModal && (
+        <RolloutModal
+          spaceId={Number(currentSpace.id)}
+          onCommitted={() => refreshData()}
+          onClose={() => setShowRolloutModal(false)}
+        />
+      )}
+
       {healthCheckSprintId && (() => {
         const healthSprint = sprints.find((s) => s.id === healthCheckSprintId);
         return healthSprint ? (
@@ -1463,6 +1473,9 @@ export function Backlog() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           <button type="button" className="bl-btn bl-btn--outline" onClick={() => setShowPlanEpicModal(true)}>
             ✨ Plan Epic with AI
+          </button>
+          <button type="button" className="bl-btn bl-btn--outline" onClick={() => setShowRolloutModal(true)}>
+            🔒 Epic rollout (durable)
           </button>
           <button type="button" className="bl-btn bl-btn--primary" onClick={handleCreateSprint}>
             + Create Sprint
