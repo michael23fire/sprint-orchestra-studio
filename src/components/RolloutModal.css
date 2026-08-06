@@ -1,0 +1,100 @@
+.rl-modal.bl-modal {
+  width: 560px;
+  max-width: 92vw;
+}
+
+.rl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rl-hint {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.rl-textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+.rl-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin: 6px 0 0;
+}
+
+.rl-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.rl-thread {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.rl-refresh {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.rl-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.rl-badge--pending_approval { background: #eff6ff; color: #2563eb; }
+.rl-badge--committing { background: #fefce8; color: #ca8a04; }
+.rl-badge--committed { background: #f0fdf4; color: #16a34a; }
+.rl-badge--rejected { background: #f1f5f9; color: #64748b; }
+.rl-badge--failed { background: #fef2f2; color: #dc2626; }
+
+.rl-epic-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 4px 0 2px;
+}
+
+.rl-epic-desc {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin: 0 0 12px;
+}
+
+.rl-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rl-issue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rl-issue input {
+  flex: 1;
+}
+
+.rl-issue__key {
+  flex-shrink: 0;
+}
+
+.rl-issue__meta {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
