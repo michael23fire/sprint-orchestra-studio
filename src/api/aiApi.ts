@@ -423,6 +423,13 @@ export const aiApi = {
     consumeStageStream<RecoveryStatusDto>('/api/ai/sprint-recovery/start/stream', { spaceId, sprintId, sprintName }, onStage),
   getSprintRecoveryStatus: (threadId: string) =>
     api.get<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}`),
+  /** Found live: crash-resume was correct at the graph/API level (same thread_id, /retry picks up
+   *  exactly where a killed process left off) but the UI had no way to *discover* that thread_id again
+   *  once it was lost from browser memory (modal closed, page reloaded, or the crash itself) —
+   *  `startSprintRecovery(Stream)` always minted a fresh thread. Called on mount, before offering
+   *  "Analyze Sprint Health"; null means no non-terminal thread exists for this sprint, not an error. */
+  findActiveSprintRecovery: (spaceId: number, sprintId: number) =>
+    api.get<RecoveryStatusDto | null>(`/api/ai/sprint-recovery/by-sprint?space_id=${spaceId}&sprint_id=${sprintId}`),
   /** Answers the one specific clarifying question the confidence gate raised — folded in as evidence,
    *  loops back into diagnosis (bounded by the server-side max_clarification_rounds). */
   answerSprintRecoveryClarification: (threadId: string, answer: string) =>

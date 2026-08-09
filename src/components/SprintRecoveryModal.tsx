@@ -280,6 +280,15 @@ interface SprintRecoveryModalProps {
  */
 export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: SprintRecoveryModalProps) {
   const [state, setState] = useState<RecoveryStatusDto | null>(null);
+  // Found live: closing this modal (or a real ai-service crash) loses `state.threadId` from browser
+  // memory, and "Analyze Sprint Health" always started a brand new thread — there was no way back to
+  // an in-progress check, even though it was still fully resumable server-side. True only for the
+  // instant it takes to ask; the button below is hidden while this is true so it can't be raced.
+  const [checkingForExisting, setCheckingForExisting] = useState(true);
+  // Distinguishes "I clicked Analyze just now" from "this modal found and reopened a check nobody in
+  // this browser tab started" — worth saying explicitly, not left for the reader to infer from the
+  // status alone, especially the first time someone sees a plan appear without ever clicking anything.
+  const [resumedExisting, setResumedExisting] = useState(false);
   const [starting, setStarting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -315,6 +324,29 @@ export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: 
       document.body.style.overflow = previousOverflow;
     };
   }, []);
+
+  // Resume-in-progress-check-if-one-exists, instead of always offering a fresh start. Reproduced live
+  // the gap this closes: kill ai-service mid-commit, restart, reopen this modal — before this, there
+  // was no way back to the interrupted thread short of already knowing its thread_id (e.g. from server
+  // logs), even though it was fully resumable. A failure here (network hiccup, ai-service still
+  // restarting) falls back to the normal fresh-start screen rather than blocking the modal open.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const existing = await aiApi.findActiveSprintRecovery(spaceId, sprintId);
+        if (!cancelled && existing) {
+          setState(existing);
+          setResumedExisting(true);
+        }
+      } catch {
+        /* no existing check found, or ai-service isn't reachable yet — fresh-start screen covers both */
+      } finally {
+        if (!cancelled) setCheckingForExisting(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spaceId, sprintId]);
 
   useEffect(() => {
     if (!isWaiting) {
@@ -491,7 +523,12 @@ export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: 
           <button type="button" className="bl-modal__close" onClick={onClose}>✕</button>
         </div>
         <div className="bl-modal__body sr-body">
-          {!state && (
+          {!state && checkingForExisting && (
+            <p className="rl-hint">
+              <span className="sr-spinner" aria-hidden="true" /> Checking for a check already in progress…
+            </p>
+          )}
+          {!state && !checkingForExisting && (
             <>
               <p className="rl-hint">
                 Checks this sprint for real signs of risk, explains what might be going wrong (every
@@ -508,6 +545,12 @@ export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: 
 
           {state && (
             <>
+              {resumedExisting && (
+                <p className="sr-resumed-note">
+                  Picked up a check already in progress for this sprint — nobody needed to click
+                  "Analyze" again to get back here.
+                </p>
+              )}
               <div className="sr-status-row">
                 <span className={`rl-badge sr-badge--${state.status}`}>{STATUS_LABELS[state.status] ?? state.status}</span>
                 {/* Found live: this showed "Attempt 1 of 3" on a sprint that got handed to a human on

@@ -459,6 +459,16 @@
   cursor: help;
 }
 
+.sr-resumed-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 /* Past steps: a real vertical timeline. The previous version was a flat radio list where every row
    read almost identically and nothing indicated ordering — the single most confusing panel in this
    modal. Newest first (matching every activity feed people already know), an explicit step number so
