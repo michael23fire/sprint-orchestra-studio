@@ -186,8 +186,9 @@ export interface SprintHealthResponseDto {
 // same request-response) — included here for structural completeness, never actually observed by a
 // client between calls.
 export type RecoveryStatus =
-  | 'diagnosing' | 'awaiting_clarification' | 'awaiting_plan_approval' | 'committing' | 'committed'
-  | 'waiting_reevaluation' | 'recovered' | 'escalated' | 'rejected' | 'revising' | 'failed';
+  | 'diagnosing' | 'no_risk_found' | 'awaiting_clarification'
+  | 'awaiting_plan_approval' | 'committing' | 'committed' | 'waiting_reevaluation' | 'recovered'
+  | 'escalated' | 'rejected' | 'revising' | 'failed';
 
 export type RecoveryActionType = 'link_dependency' | 'change_priority' | 'move_out_of_sprint' | 'add_comment';
 
@@ -232,29 +233,49 @@ export interface RecoveryStatusDto {
   escalationRound: number;
   planRevisionRound: number;
   maxPlanRevisionRounds: number;
+  maxEscalationRounds: number;
   tokenUsage: number;
   error: string | null;
-  // Only ever populated when status === 'escalated' — a plain-English "what we tried across every
-  // escalation round, and why the risk signals still didn't clear" synthesis.
-  escalationSummary: string | null;
+  // Only ever populated when status === 'escalated' — structured (a card per round), not a single
+  // pre-flattened paragraph, so the UI can lay it out readably instead of one wall of text.
+  escalationRounds: RecoveryEscalationRoundDto[];
+  escalationStillAtRiskReasons: string[];
+  // Empty: every flagged issue was acted on at least once across the rounds above — what remains is
+  // real engineering time, not more planning. Non-empty: these issue keys were never even attempted.
+  escalationUnaddressedIssueKeys: string[];
+  // True only when this status was reached without confirming the read model had caught up with its
+  // own writes first — staleness can only make a result look more at-risk than reality, never less, so
+  // this is worth showing next to an 'escalated'/'diagnosing' status but not a 'recovered' one.
+  indexCatchUpTimedOut: boolean;
+  // The plan actually being (or already) executed — distinct from `plans`, which is always the
+  // *original* 1-3 proposed options and never reflects a human edit. Found live: after an edited plan
+  // failed partway through, `plans` still showed the pre-edit action list — wrong action text, and
+  // `committedActions`' indices pointing at the wrong entries entirely. Populated once a plan is
+  // actually approved; null while still choosing.
+  approvedPlan: RecoveryPlanDto | null;
+}
+
+export interface RecoveryEscalationRoundDto {
+  round: number;
+  planName: string;
+  rationale: string;
+  actions: string[];
 }
 
 export interface RecoveryCheckpointDto {
   checkpointId: string;
   nextNode: string | null;
   status: string | null;
+  /** ISO-8601 timestamp of when this checkpoint was written; null on older records. */
+  createdAt: string | null;
+  /** Which specific action this step applied, when the generic step label can't say (a multi-action
+   *  plan produces one otherwise-identical "Applying changes in Jira…" row per action). Null elsewhere. */
+  detail: string | null;
 }
 
-/**
- * Epic rollout: a durable, human-approved commit-to-Jira workflow (see
- * ai-service/app/planning/rollout_graph.py), distinct from planEpic/refinePlan above — those never
- * persist anything (the caller commits via issueApi/sprintApi itself, see PlanEpicModal.tsx). This
- * one pauses server-side (a LangGraph `interrupt()`, checkpointed in Postgres — it survives an
- * ai-service restart while paused) and, once approved, writes the epic + issues to jira-backend
- * itself, exactly once each even across a crash mid-commit. Scope, stated plainly: creates a real
- * epic-type issue + parent-linked child issues; does NOT yet create/assign sprints or the `dependsOn`
- * issue-link rows PlanEpicModal's own commit flow does — see rollout_graph.py's module docstring.
- */
+/** Durable lifecycle behind Plan Epic: generate, pause for review, then publish the final edited
+ * epic, sprint destinations, child issues, and dependency links server-side. The `/rollout` path is
+ * retained for API compatibility; it is no longer presented as a separate product feature. */
 export type RolloutStatus = 'pending_approval' | 'committing' | 'committed' | 'rejected' | 'failed';
 
 export interface RolloutPlanDto {
@@ -449,6 +470,11 @@ export const aiApi = {
    *  IssueContentChangedEvent calls the same underlying resume from kafka_trigger.py instead. */
   triggerSprintRecoveryReevaluation: (threadId: string) =>
     api.post<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/trigger-reevaluation`),
+  /** SSE variant — `reevaluate_node` itself is fast/deterministic, but replanning (when still at
+   *  risk and under the escalation cap) chains straight into `plan_node`, a real LLM call worth a
+   *  `stage` event for instead of a bare "Checking…" with no feedback. */
+  triggerSprintRecoveryReevaluationStream: (threadId: string, onStage?: (label: string) => void) =>
+    consumeStageStream<RecoveryStatusDto>(`/api/ai/sprint-recovery/${threadId}/trigger-reevaluation/stream`, {}, onStage),
   getSprintRecoveryHistory: (threadId: string) =>
     api.get<RecoveryCheckpointDto[]>(`/api/ai/sprint-recovery/${threadId}/history`),
   /** Rewinds to an earlier checkpoint (from getSprintRecoveryHistory) and continues forward from

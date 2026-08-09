@@ -1,9 +1,9 @@
 .sr-modal.bl-modal {
-  width: 720px;
+  width: 860px;
   max-width: 94vw;
   display: flex;
   flex-direction: column;
-  max-height: 85vh;
+  max-height: 90vh;
 }
 
 .sr-body {
@@ -16,6 +16,7 @@
 
 .sr-badge--diagnosing, .sr-badge--awaiting_clarification { background: #eff6ff; color: #2563eb; }
 .sr-badge--awaiting_plan_approval { background: #eff6ff; color: #2563eb; }
+.sr-badge--no_risk_found { background: #f0fdf4; color: #16a34a; }
 .sr-badge--committing, .sr-badge--waiting_reevaluation { background: #fefce8; color: #ca8a04; }
 .sr-badge--recovered { background: #f0fdf4; color: #16a34a; }
 .sr-badge--escalated { background: #fef2f2; color: #dc2626; }
@@ -27,6 +28,26 @@
   padding: 10px 12px;
 }
 
+/* Focused handoff: every flagged issue already has an action against it — nothing failed here, so
+   this deliberately doesn't use the alarming red of a genuinely unresolved escalation. */
+.sr-escalation--focused {
+  border-color: #c7d2fe;
+  background: #f5f7ff;
+}
+
+.sr-escalation--focused .sr-escalation__title {
+  color: #3730a3;
+}
+
+.sr-escalation--focused .sr-escalation__round {
+  border-color: #c7d2fe;
+}
+
+.sr-escalation--focused .sr-escalation__round-badge {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
 .sr-escalation__title {
   margin: 0 0 4px;
   font-size: 0.85rem;
@@ -34,10 +55,97 @@
   color: #991b1b;
 }
 
-.sr-escalation__body {
+.sr-escalation__title {
+  margin: 0 0 8px;
+}
+
+.sr-escalation__rounds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sr-escalation__round {
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.sr-escalation__round-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.sr-escalation__round-badge {
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.sr-escalation__round-plan {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.sr-escalation__round-rationale {
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.sr-escalation__actions-title {
+  margin: 8px 0 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+}
+
+.sr-escalation__round-actions {
   margin: 0;
-  font-size: 0.83rem;
-  line-height: 1.55;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: #334155;
+  /* Comment bodies are now shown in full (they used to be summarised away as "comment added to X"),
+     so these entries can be long — keep them readable rather than letting one wrap into a wall. */
+  overflow-wrap: anywhere;
+}
+
+.sr-escalation__round-actions li {
+  margin-bottom: 2px;
+}
+
+.sr-escalation__reasons {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #fecaca;
+}
+
+.sr-escalation__reasons-title {
+  margin: 0 0 3px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #991b1b;
+}
+
+.sr-escalation__reasons ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  line-height: 1.6;
   color: #7f1d1d;
 }
 .sr-badge--rejected { background: #f1f5f9; color: #64748b; }
@@ -89,6 +197,12 @@
   font-size: 0.9rem;
 }
 
+.sr-clarify__why {
+  margin: 0;
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
 .sr-section-title {
   font-size: 0.78rem;
   font-weight: 700;
@@ -135,19 +249,17 @@
   margin-top: 8px;
 }
 
-/* Custom hover tooltip — deliberately NOT the native `title` attribute: browsers delay it ~1s and it's
-   easy to hover-and-move before it appears, which read as "hovering does nothing." This renders
-   instantly and visibly instead. */
-.sr-tooltip {
-  position: relative;
+/* Real tooltip, rendered by the `Tooltip` component in the .tsx file via a portal to document.body as
+   `position: fixed`, with its left/top computed in JS from the trigger's actual `getBoundingClientRect()`
+   — see that component's docstring for why two prior CSS-only attempts (left-anchor, then centering)
+   both still clipped for chips near an edge. Because position is computed per-hover in JS, this stylesheet
+   only needs to describe the box's appearance, not guess its placement. */
+.sr-tt-trigger {
   cursor: help;
 }
 
-.sr-tooltip:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 6px);
+.sr-tt-bubble {
+  position: fixed;
   background: #1e293b;
   color: #f8fafc;
   padding: 6px 9px;
@@ -158,8 +270,8 @@
   line-height: 1.45;
   white-space: pre-wrap;
   width: max-content;
-  max-width: 320px;
-  z-index: 30;
+  max-width: min(300px, calc(100vw - 16px));
+  z-index: 1000;
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.28);
   pointer-events: none;
 }
@@ -171,6 +283,21 @@
   border-radius: 4px;
   font-size: 0.7rem;
   font-family: ui-monospace, monospace;
+}
+
+/* The inline variant sits inside a sentence, not in a separate row — smaller, coloured to read as "a
+   footnote" rather than another word in the sentence, with tight margins so a run of them doesn't
+   force awkward line breaks. */
+.sr-cite-chip--inline {
+  background: #eef2ff;
+  color: #4f46e5;
+  margin: 0 1px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.sr-hypotheses--past summary {
+  color: #64748b;
 }
 
 .sr-plans {
@@ -297,27 +424,216 @@
   gap: 6px;
 }
 
-.sr-history__row {
+/* Status row: the old `.rl-status-row` packed a badge, a counter and a button together with no gap,
+   so "Needs a human decision" ran straight into "Attempt 3". Explicit gaps + a spacer that pushes the
+   button to the right edge, and it wraps instead of overflowing on a narrow modal. */
+.sr-status-row {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  cursor: pointer;
-  padding: 4px 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 4px;
 }
 
-.sr-history__label {
-  font-size: 0.82rem;
+.sr-status-row__spacer {
+  flex: 1 1 auto;
+}
+
+.sr-attempt {
+  font-size: 0.78rem;
+  color: #475569;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.sr-stale-caveat {
+  font-size: 0.78rem;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Past steps: a real vertical timeline. The previous version was a flat radio list where every row
+   read almost identically and nothing indicated ordering — the single most confusing panel in this
+   modal. Newest first (matching every activity feed people already know), an explicit step number so
+   ordering survives identical labels, a connector line, and both relative and absolute time. */
+.sr-timeline {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  position: relative;
+}
+
+.sr-timeline__item {
+  position: relative;
+  padding-left: 22px;
+  border-radius: 8px;
+  transition: background 0.12s ease;
+}
+
+/* The connector line, drawn between markers rather than through them — stops at the last item so the
+   timeline visibly terminates instead of trailing into empty space. */
+.sr-timeline__item::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 22px;
+  bottom: -2px;
+  width: 2px;
+  background: #e2e8f0;
+}
+
+.sr-timeline__item:last-child::before {
+  display: none;
+}
+
+.sr-timeline__item:hover {
+  background: #f8fafc;
+}
+
+.sr-timeline__item--selected {
+  background: #eef2ff;
+}
+
+.sr-timeline__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 8px 8px 0;
+}
+
+.sr-timeline__radio {
+  margin: 2px 0 0;
+  flex: none;
+}
+
+.sr-timeline__marker {
+  position: absolute;
+  left: 0;
+  top: 13px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #cbd5e1;
+  box-sizing: border-box;
+}
+
+.sr-timeline__item--latest .sr-timeline__marker {
+  border-color: #6366f1;
+  background: #6366f1;
+  box-shadow: 0 0 0 3px #e0e7ff;
+}
+
+.sr-timeline__item--selected .sr-timeline__marker {
+  border-color: #4f46e5;
+}
+
+.sr-timeline__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sr-timeline__headline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sr-timeline__step {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  flex: none;
+}
+
+.sr-timeline__label {
+  font-size: 0.85rem;
   color: #1e293b;
 }
 
-.sr-history__raw {
-  font-size: 0.68rem;
-  font-family: ui-monospace, monospace;
-  color: #cbd5e1;
+.sr-timeline__now {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #4f46e5;
+  background: #e0e7ff;
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.sr-timeline__time {
+  font-size: 0.74rem;
+  color: #94a3b8;
+}
+
+.sr-timeline__detail {
+  font-size: 0.78rem;
+  color: #475569;
+  overflow-wrap: anywhere;
+}
+
+.sr-rewind {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: #f5f7ff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sr-rewind__title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #3730a3;
+}
+
+.sr-rewind__explainer {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #4338ca;
+}
+
+.sr-rewind__steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #4338ca;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .sr-hint-tight {
   margin-top: -4px;
+}
+
+.sr-rewind__warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 .sr-hint-tight code {
@@ -417,3 +733,4 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
