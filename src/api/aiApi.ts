@@ -153,7 +153,7 @@ export interface FlaggedIssueDto {
 
 export type SprintRiskLevel = 'on_track' | 'at_risk' | 'behind';
 
-export interface SprintHealthRequestDto {
+export interface SprintPaceRequestDto {
   sprintName: string;
   riskLevel: SprintRiskLevel;
   daysRemaining: number | null;
@@ -166,11 +166,14 @@ export interface SprintHealthRequestDto {
   unestimatedIssues: FlaggedIssueDto[];
 }
 
-export interface SprintHealthResponseDto {
+export interface SprintPaceResponseDto {
   summary: string;
   recommendations: string[];
   degraded: boolean;
   latencySeconds: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
 }
 
 /**
@@ -316,6 +319,7 @@ export interface RolloutPlanDto {
   epic: EpicDraftDto | null;
   issues: IssueDraftDto[];
   sprintPlan: SprintBucketDto[];
+  sprintTargets: RolloutSprintTargetDto[];
 }
 
 export interface RolloutStatusDto {
@@ -324,7 +328,18 @@ export interface RolloutStatusDto {
   plan: RolloutPlanDto | null;
   epicIssueKey: string | null;
   committedIssueKeys: Record<string, string>;
+  degraded: boolean;
   error: string | null;
+  sprintCapacityPoints: number | null;
+  targetSprintCount: number | null;
+}
+
+export interface RolloutSprintTargetDto {
+  sprintIndex: number;
+  issueTempIds: string[];
+  mode: 'existing' | 'new';
+  sprintId: number | null;
+  sprintName: string | null;
 }
 
 export const aiApi = {
@@ -384,12 +399,10 @@ export const aiApi = {
   search: (query: string, spaceIds: number[], limit = 10) =>
     api.post<SemanticSearchResponseDto>('/api/ai/search', { query, space_ids: spaceIds, limit }),
   /** Turns pre-computed sprint stats (real burndown math, done by the caller) into a short narrative
-   *  + recommendations — never calculates risk itself, see app/sprint_health/schemas.py. */
-  sprintHealth: (req: SprintHealthRequestDto) =>
-    api.post<SprintHealthResponseDto>('/api/ai/sprint-health', req),
-  /** Starts a durable rollout: generates a plan (same call planEpic makes), then pauses server-side
-   *  for approval. Always returns with status='pending_approval' (or 'failed' if generation itself
-   *  failed) — this call alone never writes anything to Jira. */
+   *  + recommendations — never calculates risk itself, see app/sprint_pace/schemas.py. */
+  sprintPace: (req: SprintPaceRequestDto) =>
+    api.post<SprintPaceResponseDto>('/api/ai/sprint-pace', req),
+  /** Starts the durable Plan Epic lifecycle and pauses server-side at its editable preview. */
   startRollout: (
     proposal: string,
     spaceId: number,
@@ -426,23 +439,25 @@ export const aiApi = {
    *  and the way to check whether a rollout survived an ai-service restart while paused/committing. */
   getRolloutStatus: (threadId: string) =>
     api.get<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}`),
-  /** Resumes a paused rollout with a human decision (`Command(resume=...)` server-side). `edit`
-   *  requires the caller's modified epic+issues; `approve`/`reject` ignore them if present. Runs the
-   *  commit loop to completion (or failure) before returning. */
+  /** Finds this user's latest unfinished Plan Epic workflow in a space after modal close/reload. */
+  findActivePlanEpic: (spaceId: number) =>
+    api.get<RolloutStatusDto | null>(`/api/ai/plan-epic/rollout/active?space_id=${spaceId}`),
+  /** Approves the final human-edited plan. Sprint targets are included by the integrated Plan Epic
+   *  UI so the server-side workflow has full parity with the former browser commit loop. */
   submitRolloutDecision: (
     threadId: string,
     decision: 'approve' | 'edit' | 'reject',
-    edited?: { epic: EpicDraftDto; issues: IssueDraftDto[] },
+    edited?: { epic: EpicDraftDto; issues: IssueDraftDto[]; sprintTargets?: RolloutSprintTargetDto[] },
   ) =>
     api.post<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}/decision`, {
       decision,
       epic: decision === 'edit' ? edited?.epic : undefined,
       issues: decision === 'edit' ? edited?.issues : undefined,
+      sprint_targets: decision === 'edit' ? edited?.sprintTargets : undefined,
     }),
-  /** Retries a rollout stuck at status='failed' from a *clean* failure — jira-backend was briefly
-   *  unreachable while ai-service itself stayed up (a real process crash mid-commit needs no explicit
-   *  retry call; it self-resumes from the same checkpoint the next time this thread is touched). Only
-   *  valid when status is 'failed' — a 409 otherwise. Never re-creates whatever already succeeded. */
+  /** Explicitly resumes a rollout left at `committing` by a process crash or at `failed` by a caught
+   *  Jira error. A status GET is deliberately read-only; this call advances the saved checkpoint and
+   *  never re-creates steps already present in its durable ledgers. */
   retryRollout: (threadId: string) =>
     api.post<RolloutStatusDto>(`/api/ai/plan-epic/rollout/${threadId}/retry`),
 
@@ -461,7 +476,7 @@ export const aiApi = {
    *  exactly where a killed process left off) but the UI had no way to *discover* that thread_id again
    *  once it was lost from browser memory (modal closed, page reloaded, or the crash itself) —
    *  `startSprintRecovery(Stream)` always minted a fresh thread. Called on mount, before offering
-   *  "Analyze Sprint Health"; null means no non-terminal thread exists for this sprint, not an error. */
+   *  "Diagnose Sprint Risk"; null means no non-terminal thread exists for this sprint, not an error. */
   findActiveSprintRecovery: (spaceId: number, sprintId: number) =>
     api.get<RecoveryStatusDto | null>(`/api/ai/sprint-recovery/by-sprint?space_id=${spaceId}&sprint_id=${sprintId}`),
   /** Answers the one specific clarifying question the confidence gate raised — folded in as evidence,
