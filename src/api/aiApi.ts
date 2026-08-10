@@ -235,6 +235,10 @@ export interface RecoveryStatusDto {
   maxPlanRevisionRounds: number;
   maxEscalationRounds: number;
   tokenUsage: number;
+  /** Real measured $ for this thread — provider-reported token counts priced per model, not
+   *  `tokenUsage * a guess`. Found live: this used to be derived from a flat 4000-tokens-per-call
+   *  estimate, so "what did this check cost" had no honest answer. */
+  costUsd: number;
   error: string | null;
   // Only ever populated when status === 'escalated' — structured (a card per round), not a single
   // pre-flattened paragraph, so the UI can lay it out readably instead of one wall of text.
@@ -253,6 +257,20 @@ export interface RecoveryStatusDto {
   // `committedActions`' indices pointing at the wrong entries entirely. Populated once a plan is
   // actually approved; null while still choosing.
   approvedPlan: RecoveryPlanDto | null;
+  /** The AI's direct reply to whatever you last told it — what it changed about these plans, or the
+   *  concrete reason it couldn't. Found live: a note that genuinely couldn't change the outcome
+   *  ("we will add 2 extra engineers" against work blocked on an external legal reviewer) produced
+   *  plans that simply never mentioned it, which looks exactly like being ignored. Null when nothing
+   *  was said this round. */
+  noteResponse: string | null;
+  // **Found live**: a crash between committing all of a round's actions and the *next* round's plan
+  // even being generated left a checkpoint at status === 'diagnosing' with real work still pending —
+  // but the "Resume" button only ever checked for the literal strings 'committing'/'failed', so this
+  // crash had no button anywhere and the modal just... stopped, with no explanation. The status string
+  // alone can't tell that case apart from a genuine `clarify` pause (which also shows 'diagnosing' but
+  // must never be silently resumed) — this is computed server-side from whether LangGraph itself has a
+  // pending task with no interrupt on it, which is the only place that distinction is actually knowable.
+  resumable: boolean;
 }
 
 export interface RecoveryEscalationRoundDto {
@@ -271,6 +289,22 @@ export interface RecoveryCheckpointDto {
   /** Which specific action this step applied, when the generic step label can't say (a multi-action
    *  plan produces one otherwise-identical "Applying changes in Jira…" row per action). Null elsewhere. */
   detail: string | null;
+  /** Real Jira actions this thread committed *after* this step, oldest first — what rewinding here
+   *  would discard this thread's own awareness of (the writes themselves stay in Jira either way).
+   *  Empty is the clean, intended rewind case; found live that every checkpoint used to be selectable
+   *  with no way to tell that apart from "this thread already took real actions past this point," and
+   *  a bare count wasn't enough either — the next question was always "which ones?". */
+  realActionsCommittedAfter: string[];
+  /** What was actually on the table at this decision point — the proposed plan(s) or the clarifying
+   *  question. Null everywhere except real rewind targets; found live that "Waiting for your decision"
+   *  repeated across every revision gave no way to tell revision 1 apart from revision 3 without
+   *  clicking each one. */
+  revisionSummary: string | null;
+  /** The human note that produced this revision — a clarifying answer, or the note typed into a
+   *  time-travel rewind. Found live: a user rewound with "we will add 2 extra engineers to this
+   *  sprint" and nothing in the timeline showed it, so a plan that didn't mention engineers read as
+   *  the input being thrown away (it wasn't — it became evidence and the hypothesis weighed it). */
+  triggeredByNote: string | null;
 }
 
 /** Durable lifecycle behind Plan Epic: generate, pause for review, then publish the final edited

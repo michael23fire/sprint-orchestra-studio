@@ -306,6 +306,30 @@
   gap: 12px;
 }
 
+/* The AI answering the human back, rather than describing the sprint — deliberately styled as a reply
+   (accent left edge, its own tag) so it doesn't read as one more system-generated finding among the
+   plan cards below it. */
+.sr-note-response {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #6366f1;
+  border-radius: 0 8px 8px 0;
+  background: #f5f7ff;
+  color: #312e81;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.sr-note-response__tag {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6366f1;
+  margin-bottom: 3px;
+}
+
 .sr-plan {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
@@ -449,6 +473,113 @@
   cursor: help;
 }
 
+/* Same pill shape as `.sr-attempt` — it belongs to the same row of "facts about this run" — in a
+   monospace face so a cost and a token count stay easy to compare across runs at a glance. */
+.sr-cost {
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* The "?" affordance next to either retry entry point, plus the panel it opens. One shared style for
+   one shared explanation — see WhichRetryHelp. */
+.sr-help-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid #c7d2fe;
+  border-radius: 50%;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.sr-help-toggle:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+.sr-help {
+  margin: 8px 0 4px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.sr-help p { margin: 0; }
+
+.sr-help__lead {
+  color: #1e293b;
+}
+
+/* Two columns on anything but a narrow modal: the label acts as a row header so the two options read
+   as a comparison rather than as two unrelated paragraphs. */
+.sr-help__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .sr-help__row { grid-template-columns: 1fr; gap: 4px; }
+}
+
+.sr-help__which {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #4338ca;
+  background: #eef2ff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.sr-help__which--rewind {
+  color: #92400e;
+  background: #fffbeb;
+}
+
+.sr-help__when { color: #1e293b; }
+
+.sr-help__eg {
+  margin-top: 3px !important;
+  color: #475569;
+}
+
+.sr-help__how {
+  margin-top: 3px !important;
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+.sr-help__rule {
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 9px;
+  color: #334155;
+}
+
 .sr-stale-caveat {
   font-size: 0.78rem;
   color: #92400e;
@@ -467,6 +598,30 @@
   color: #3730a3;
   font-size: 0.8rem;
   line-height: 1.4;
+}
+
+/* Found live: `.rl-error` (shared across every modal in this app) has no styling defined anywhere —
+   an error rendered as plain black text, indistinguishable from every other line in the modal, at
+   the very top of a body that's already scrolled well past that point by the time an error can occur
+   (approving a plan is the last thing visible before a request goes out). A real kill -9 mid-approve
+   produced exactly that: "network error" landed off-screen, unstyled, and was only found by scrolling
+   up manually. `position: sticky` (not a scroll-into-view effect) keeps it pinned to the top of
+   `.sr-body`'s own scroll area the instant it appears, regardless of where the reader's scroll
+   position already was — no JS scroll manipulation, and it un-pins itself the moment `.sr-body`
+   scrolls back to its own top, so it never permanently blocks content above it. */
+.sr-error-banner {
+  position: sticky;
+  top: -1px;
+  z-index: 5;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  font-weight: 500;
 }
 
 /* Past steps: a real vertical timeline. The previous version was a flat radio list where every row
@@ -519,6 +674,19 @@
   padding: 8px 8px 8px 0;
 }
 
+/* Found live: only a still-open decision (a plan or question nobody has acted on) is ever worth
+   rewinding to — every intermediate step is real history worth keeping visible, just not something to
+   click. No radio here at all (not just disabled), and `padding-left` stands in for the radio's own
+   width so the label text still lines up with the selectable rows above/below it. */
+.sr-timeline__row--info {
+  cursor: default;
+  padding-left: 22px;
+}
+
+.sr-timeline__item--info:hover {
+  background: none;
+}
+
 .sr-timeline__radio {
   margin: 2px 0 0;
   flex: none;
@@ -546,6 +714,16 @@
   border-color: #4f46e5;
 }
 
+/* A plainer, smaller dot for informational-only steps — visually recedes next to the real (selectable)
+   markers above, matching that these rows are context, not something to act on. */
+.sr-timeline__marker--info {
+  width: 8px;
+  height: 8px;
+  top: 16px;
+  left: 3px;
+  border-color: #e2e8f0;
+}
+
 .sr-timeline__body {
   display: flex;
   flex-direction: column;
@@ -569,9 +747,92 @@
   flex: none;
 }
 
+/* The one thing in this whole panel actually worth clicking — deliberately louder than `.sr-timeline__
+   step`'s muted uppercase label, since found live a repeated generic "Waiting for your decision" gave
+   no way to tell a first draft apart from its third revision. */
+.sr-timeline__revision {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #4f46e5;
+  background: #eef2ff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  flex: none;
+}
+
+/* A superseded/already-acted-on revision is still worth reading (it's the progression that makes this
+   list make sense) but must not look like the one thing still clickable — same badge shape, drained
+   of the accent colour. */
+.sr-timeline__revision--past {
+  color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.sr-timeline__superseded-note {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+/* One badge shape shared by the non-revision row kinds, colour-coded by what actually happened —
+   "In Jira" is the only one describing a real external side effect, so it's the only one that carries
+   a warm colour; "Ended" is terminal, not alarming. */
+.sr-timeline__badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  padding: 2px 8px;
+  flex: none;
+}
+
+.sr-timeline__badge--jira {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.sr-timeline__badge--end {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+/* A human's own words, visually distinct from everything the system generated around them — this is
+   the one line in the timeline the reader wrote themselves. */
+.sr-timeline__note {
+  font-size: 0.78rem;
+  color: #3730a3;
+  background: #eef2ff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.sr-history__toggle {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #6366f1;
+  font-size: 0.76rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.sr-history__toggle:hover {
+  color: #4f46e5;
+}
+
 .sr-timeline__label {
   font-size: 0.85rem;
   color: #1e293b;
+}
+
+.sr-timeline__row--info .sr-timeline__label {
+  color: #94a3b8;
+  font-size: 0.8rem;
 }
 
 .sr-timeline__now {
@@ -594,6 +855,31 @@
   font-size: 0.78rem;
   color: #475569;
   overflow-wrap: anywhere;
+}
+
+/* Found live: rewinding to before real Jira writes this same thread already made doesn't undo them —
+   it just makes the thread forget it made them. Locked rows stay legible (not literally hidden — the
+   step is still real history) but visibly inert: no pointer cursor, no hover highlight, radio disabled. */
+.sr-timeline__item--locked .sr-timeline__row {
+  cursor: not-allowed;
+}
+
+.sr-timeline__item--locked:hover {
+  background: none;
+}
+
+.sr-timeline__item--locked .sr-timeline__label,
+.sr-timeline__item--locked .sr-timeline__step {
+  color: #94a3b8;
+}
+
+.sr-timeline__locked-note {
+  font-size: 0.74rem;
+  color: #b45309;
+  background: #fffbeb;
+  border-radius: 6px;
+  padding: 3px 7px;
+  width: fit-content;
 }
 
 .sr-rewind {
