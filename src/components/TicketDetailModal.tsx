@@ -1255,7 +1255,13 @@ export function TicketDetailModal({
 
   function handleDeleteIssue() {
     if (!onDeleteTicket) return;
-    if (!confirm(`Delete ${draft.id}? This action cannot be undone.`)) return;
+    const descendantCount = draft.issueType === 'epic'
+      ? getDescendantKeys(draft.id, allTickets).length
+      : 0;
+    const message = draft.issueType === 'epic'
+      ? `Delete epic ${draft.id} and its ${descendantCount} child issue${descendantCount !== 1 ? 's' : ''}? This action cannot be undone.`
+      : `Delete ${draft.id}? This action cannot be undone.`;
+    if (!confirm(message)) return;
     onDeleteTicket(draft.id);
     onClose();
   }
@@ -2257,7 +2263,7 @@ export function TicketDetailModal({
                         handleDeleteIssue();
                       }}
                     >
-                      🗑 Delete issue
+                      {draft.issueType === 'epic' ? '🗑 Delete epic and children' : '🗑 Delete issue'}
                     </button>
                   </div>
                 )}
