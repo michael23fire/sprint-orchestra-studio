@@ -137,6 +137,59 @@
   border-color: #cbd5e1;
 }
 
+/* Sprint pace check flagged the sprint at_risk/behind — nudge toward AI recovery without blocking it. */
+.bl-btn--suggested {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-color: #fbbf24;
+  color: #92400e;
+}
+
+.bl-btn--suggested:hover {
+  background: #fffbeb;
+  border-color: #f59e0b;
+}
+
+.bl-sprint__suggested-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: #fef3c7;
+  color: #b45309;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+/* Pairs a button with a "?" that explains the feature on hover — the button click stays the primary
+   action; the icon is a separate hover target so a curious-but-cautious click never fires the button. */
+.bl-sprint__action-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.bl-sprint__help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 50%;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 0.65rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+.bl-sprint__help-icon:hover {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 /* Atlaskit-style default button — matches Jira Cloud backlog "Complete sprint" */
 .bl-btn--default {
   background: #fff;

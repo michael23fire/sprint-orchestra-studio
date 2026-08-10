@@ -79,9 +79,9 @@
   color: #fff;
 }
 
-/* Feature-specific ("sh-" = Sprint Health) */
+/* Feature-specific ("sp-" = Sprint Pace) */
 
-.sh-modal.bl-modal {
+.sp-modal.bl-modal {
   width: min(38rem, 94vw);
   max-width: min(38rem, 94vw);
   max-height: 86vh;
@@ -89,46 +89,46 @@
   flex-direction: column;
 }
 
-.sh-body {
+.sp-body {
   overflow-y: auto;
 }
 
-.sh-stats {
+.sp-stats {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
 }
 
-.sh-badge {
+.sp-badge {
   padding: 3px 10px;
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 700;
 }
 
-.sh-badge--ok { background: #dcfce7; color: #15803d; }
-.sh-badge--warn { background: #fef3c7; color: #b45309; }
-.sh-badge--danger { background: #fee2e2; color: #b91c1c; }
+.sp-badge--ok { background: #dcfce7; color: #15803d; }
+.sp-badge--warn { background: #fef3c7; color: #b45309; }
+.sp-badge--danger { background: #fee2e2; color: #b91c1c; }
 
-.sh-stat {
+.sp-stat {
   font-size: 0.78rem;
   font-weight: 600;
   color: #334155;
 }
 
-.sh-stat--muted {
+.sp-stat--muted {
   font-weight: 500;
   color: #94a3b8;
 }
 
-.sh-hint {
+.sp-hint {
   margin: 0;
   font-size: 0.8rem;
   color: #64748b;
 }
 
-.sh-spinner {
+.sp-spinner {
   display: inline-block;
   width: 1.1rem;
   height: 1.1rem;
@@ -136,14 +136,14 @@
   border: 2.5px solid #c7d2fe;
   border-top-color: #4f46e5;
   border-radius: 50%;
-  animation: sh-spin 0.7s linear infinite;
+  animation: sp-spin 0.7s linear infinite;
 }
 
-@keyframes sh-spin {
+@keyframes sp-spin {
   to { transform: rotate(360deg); }
 }
 
-.sh-loading {
+.sp-loading {
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -152,7 +152,12 @@
   color: #64748b;
 }
 
-.sh-hint--warn {
+.sp-hint--cost {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.sp-hint--warn {
   color: #b45309;
   background: #fffbeb;
   border: 1px solid #fde68a;
@@ -160,26 +165,26 @@
   padding: 0.5rem 0.7rem;
 }
 
-.sh-error {
+.sp-error {
   margin: 0;
   font-size: 0.8rem;
   color: #dc2626;
 }
 
-.sh-summary {
+.sp-summary {
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.55;
   color: #0f172a;
 }
 
-.sh-recommendations {
+.sp-recommendations {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
 }
 
-.sh-recommendations__label {
+.sp-recommendations__label {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -187,7 +192,7 @@
   color: #94a3b8;
 }
 
-.sh-recommendations ul {
+.sp-recommendations ul {
   margin: 0;
   padding-left: 1.1rem;
   font-size: 0.82rem;
@@ -195,7 +200,7 @@
   line-height: 1.6;
 }
 
-.sh-flagged {
+.sp-flagged {
   border-top: 1px solid #e2e8f0;
   padding-top: 0.65rem;
   display: flex;
@@ -203,13 +208,13 @@
   gap: 0.6rem;
 }
 
-.sh-flagged__group {
+.sp-flagged__group {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
 }
 
-.sh-flagged__label {
+.sp-flagged__label {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -217,7 +222,7 @@
   color: #94a3b8;
 }
 
-.sh-flagged__row {
+.sp-flagged__row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -225,7 +230,7 @@
   color: #334155;
 }
 
-.sh-flagged__detail {
+.sp-flagged__detail {
   color: #94a3b8;
   font-size: 0.72rem;
 }

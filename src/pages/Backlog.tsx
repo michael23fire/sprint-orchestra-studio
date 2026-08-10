@@ -9,10 +9,10 @@ import type { Sprint, SprintStatus, SprintReorderAction } from '../types/sprint'
 import { BoardAssigneeFilter } from '../components/BoardAssigneeFilter';
 import { CompleteSprintModal } from '../components/CompleteSprintModal';
 import { PlanEpicModal } from '../components/PlanEpicModal';
-import { RolloutModal } from '../components/RolloutModal';
 import { SprintRecoveryModal } from '../components/SprintRecoveryModal';
-import { SprintHealthModal } from '../components/SprintHealthModal';
+import { SprintPaceModal } from '../components/SprintPaceModal';
 import { IssueFilterPanel } from '../components/IssueFilterPanel';
+import { Tooltip, TooltipExplainer } from '../components/Tooltip';
 import { useCurrentUser } from '../context/UserContext';
 import { useSpaces } from '../context/SpaceContext';
 import { effectiveSpaceMemberIds } from '../types/space';
@@ -31,6 +31,7 @@ import {
   withMatchedParents,
 } from '../utils/issueFilters';
 import { getDirectChildren, isSubtask } from '../utils/ticketHierarchy';
+import { computeSprintPaceStats } from '../utils/sprintPaceStats';
 import './Backlog.css';
 
 /** Jira-style: epics are never sprint-scoped in the UI; they always bucket with backlog. */
@@ -618,7 +619,7 @@ interface SprintSectionProps {
   onToggle: () => void;
   onStartSprint: () => void;
   onCompleteSprint: () => void;
-  onHealthCheck?: () => void;
+  onPaceCheck?: () => void;
   onRecoveryCheck?: () => void;
   onEditSprint: () => void;
   onDeleteSprint: () => void;
@@ -633,6 +634,7 @@ interface SprintSectionProps {
   onSaveIssue: (title: string, storyPoints?: number) => void;
   onCancelCreate: () => void;
 }
+
 
 const SPRINT_STATUS_META: Record<SprintStatus, { label: string; cls: string }> = {
   active:    { label: 'ACTIVE',    cls: 'bl-sprint__badge--active' },
@@ -775,12 +777,21 @@ function SprintEstimateBadges({ tickets }: { tickets: Ticket[] }) {
 
 function SprintSection({
   sprint, rootTickets, statsTickets, allTickets, collapsedParents, onToggleParentFold, isCollapsed, onToggle,
-  onStartSprint, onCompleteSprint, onHealthCheck, onRecoveryCheck, onEditSprint, onDeleteSprint, onReorderSprint, canMoveUp, canMoveDown,
+  onStartSprint, onCompleteSprint, onPaceCheck, onRecoveryCheck, onEditSprint, onDeleteSprint, onReorderSprint, canMoveUp, canMoveDown,
   startDisabledReason, onCreateIssue, onTicketClick,
   isCreating, onSaveIssue, onCancelCreate,
 }: SprintSectionProps) {
   const progress = sprintCompletionPercent(sprint, statsTickets);
   const meta = SPRINT_STATUS_META[sprint.status];
+  // Recovery isn't gated on health check: recovery's own diagnose step runs a different, issue-level
+  // signal set (blocked-without-flag, owner overload, late scope add, ...) that a sprint-level
+  // on_track burndown can still miss — health's riskLevel is a hint about when recovery is worth a
+  // look, not a precondition for running it. Future/completed sprints (health isn't computed there) get
+  // no hint either way.
+  const healthRiskLevel = sprint.status === 'active'
+    ? computeSprintPaceStats(sprint, statsTickets).riskLevel
+    : null;
+  const recoverySuggested = healthRiskLevel === 'at_risk' || healthRiskLevel === 'behind';
   const nTotal = sprint.status === 'completed'
     ? (sprint.finalIssueCount ?? statsTickets.length)
     : statsTickets.length;
@@ -853,15 +864,51 @@ function SprintSection({
               Start sprint
             </button>
           )}
-          {sprint.status === 'active' && onHealthCheck && (
-            <button type="button" className="bl-btn bl-btn--outline bl-btn--sm" onClick={onHealthCheck}>
-              🩺 AI health check
-            </button>
+          {sprint.status === 'active' && onPaceCheck && (
+            <span className="bl-sprint__action-with-help">
+              <button type="button" className="bl-btn bl-btn--outline bl-btn--sm" onClick={onPaceCheck}>
+                🩺 Sprint pace check
+              </button>
+              <Tooltip
+                text={
+                  <TooltipExplainer
+                    title="What it does"
+                    description="Turns this sprint's points, days remaining, and basic issue flags (blocked, stale, no estimate) into a plain-language summary and a few suggestions."
+                    note="🔒 Read-only — never changes anything in Jira."
+                  />
+                }
+              >
+                <span className="bl-sprint__help-icon" aria-label="What does Sprint pace check do?">?</span>
+              </Tooltip>
+            </span>
           )}
-          {sprint.status === 'active' && onRecoveryCheck && (
-            <button type="button" className="bl-btn bl-btn--outline bl-btn--sm" onClick={onRecoveryCheck}>
-              🚑 AI recovery
-            </button>
+          {onRecoveryCheck && (
+            <span className="bl-sprint__action-with-help">
+              <button
+                type="button"
+                className={`bl-btn bl-btn--outline bl-btn--sm${recoverySuggested ? ' bl-btn--suggested' : ''}`}
+                onClick={onRecoveryCheck}
+                title={
+                  recoverySuggested
+                    ? `Suggested now — Sprint pace check shows this sprint ${healthRiskLevel?.replace('_', ' ')} (a pace signal, not a diagnosis).`
+                    : undefined
+                }
+              >
+                🚑 Diagnose risk
+                {recoverySuggested && <span className="bl-sprint__suggested-badge">Suggested</span>}
+              </button>
+              <Tooltip
+                text={
+                  <TooltipExplainer
+                    title="What it does"
+                    description="Investigates why this sprint might be at risk — blocked issues, an overloaded owner, work added late — using real evidence pulled from Jira, then proposes a fix plan. Goes deeper than Sprint pace check's summary: this looks at individual issues, not just the aggregate."
+                    note="🔒 Nothing is written to Jira until you review and approve a plan."
+                  />
+                }
+              >
+                <span className="bl-sprint__help-icon" aria-label="What does AI recovery do?">?</span>
+              </Tooltip>
+            </span>
           )}
           {sprint.status === 'active' && (
             <button type="button" className="bl-btn bl-btn--default bl-btn--sm" onClick={onCompleteSprint}>
@@ -1047,8 +1094,7 @@ export function Backlog() {
   const [editingSprintId, setEditingSprintId] = useState<string | null>(null);
   const [completingSprintId, setCompletingSprintId] = useState<string | null>(null);
   const [showPlanEpicModal, setShowPlanEpicModal] = useState(false);
-  const [showRolloutModal, setShowRolloutModal] = useState(false);
-  const [healthCheckSprintId, setHealthCheckSprintId] = useState<string | null>(null);
+  const [paceCheckSprintId, setPaceCheckSprintId] = useState<string | null>(null);
   const [recoveryCheckSprintId, setRecoveryCheckSprintId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [topLevelOnly, setTopLevelOnly] = useState(false);
@@ -1343,8 +1389,10 @@ export function Backlog() {
         onToggle={() => toggleCollapse(sprint.id)}
         onStartSprint={() => setStartingSprintId(sprint.id)}
         onCompleteSprint={() => setCompletingSprintId(sprint.id)}
-        onHealthCheck={sprint.status === 'active' ? () => setHealthCheckSprintId(sprint.id) : undefined}
-        onRecoveryCheck={sprint.status === 'active' ? () => setRecoveryCheckSprintId(sprint.id) : undefined}
+        onPaceCheck={sprint.status === 'active' ? () => setPaceCheckSprintId(sprint.id) : undefined}
+        onRecoveryCheck={
+          sprint.status !== 'completed' ? () => setRecoveryCheckSprintId(sprint.id) : undefined
+        }
         onEditSprint={() => setEditingSprintId(sprint.id)}
         onDeleteSprint={() => handleDeleteSprint(sprint.id)}
         onReorderSprint={isFuture ? (action) => reorderSprint(sprint.id, action) : undefined}
@@ -1422,21 +1470,13 @@ export function Backlog() {
         />
       )}
 
-      {showRolloutModal && (
-        <RolloutModal
-          spaceId={Number(currentSpace.id)}
-          onCommitted={() => refreshData()}
-          onClose={() => setShowRolloutModal(false)}
-        />
-      )}
-
-      {healthCheckSprintId && (() => {
-        const healthSprint = sprints.find((s) => s.id === healthCheckSprintId);
-        return healthSprint ? (
-          <SprintHealthModal
-            sprint={healthSprint}
+      {paceCheckSprintId && (() => {
+        const paceSprint = sprints.find((s) => s.id === paceCheckSprintId);
+        return paceSprint ? (
+          <SprintPaceModal
+            sprint={paceSprint}
             tickets={tickets}
-            onClose={() => setHealthCheckSprintId(null)}
+            onClose={() => setPaceCheckSprintId(null)}
           />
         ) : null;
       })()}
@@ -1494,9 +1534,6 @@ export function Backlog() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           <button type="button" className="bl-btn bl-btn--outline" onClick={() => setShowPlanEpicModal(true)}>
             ✨ Plan Epic with AI
-          </button>
-          <button type="button" className="bl-btn bl-btn--outline" onClick={() => setShowRolloutModal(true)}>
-            🔒 Epic rollout (durable)
           </button>
           <button type="button" className="bl-btn bl-btn--primary" onClick={handleCreateSprint}>
             + Create Sprint

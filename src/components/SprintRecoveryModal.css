@@ -249,32 +249,9 @@
   margin-top: 8px;
 }
 
-/* Real tooltip, rendered by the `Tooltip` component in the .tsx file via a portal to document.body as
-   `position: fixed`, with its left/top computed in JS from the trigger's actual `getBoundingClientRect()`
-   — see that component's docstring for why two prior CSS-only attempts (left-anchor, then centering)
-   both still clipped for chips near an edge. Because position is computed per-hover in JS, this stylesheet
-   only needs to describe the box's appearance, not guess its placement. */
-.sr-tt-trigger {
-  cursor: help;
-}
-
-.sr-tt-bubble {
-  position: fixed;
-  background: #1e293b;
-  color: #f8fafc;
-  padding: 6px 9px;
-  border-radius: 6px;
-  font-size: 0.72rem;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-weight: 400;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  width: max-content;
-  max-width: min(300px, calc(100vw - 16px));
-  z-index: 1000;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.28);
-  pointer-events: none;
-}
+/* Tooltip box styling (.tt-trigger / .tt-bubble) now lives in Tooltip.css, imported by the shared
+   `Tooltip` component itself — nothing sprint-recovery-specific about it once the Backlog row's
+   explainer icons needed the same positioning logic. */
 
 .sr-cite-chip {
   background: #f1f5f9;

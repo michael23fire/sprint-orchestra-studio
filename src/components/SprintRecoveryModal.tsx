@@ -1,68 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { aiApi } from '../api';
 import type { RecoveryActionDto, RecoveryCheckpointDto, RecoveryStatusDto } from '../api';
+import { Tooltip } from './Tooltip';
 import './SprintRecoveryModal.css';
-
-/** A tooltip that measures the viewport and clamps its own position, rendered through a portal to
- *  `document.body` as `position: fixed`.
- *
- *  Found live, twice: the previous approach was a pure-CSS `:hover::after` anchored to the trigger
- *  element. CSS alone has no way to know how close that trigger is to the screen edge, so any chip in
- *  the outer ~150px of the modal still pushed its tooltip off-screen — centering it on the trigger
- *  (the first attempted fix) only moved *which* chips were affected, it couldn't eliminate the class
- *  of bug, because centering still has no idea where the viewport boundary actually is. This
- *  component does: on hover it reads the trigger's `getBoundingClientRect()`, then clamps the
- *  tooltip's horizontal position to `[8px, window width - tooltip width - 8px]` and flips it below
- *  the trigger instead of above whenever there isn't enough room above (e.g. right under the modal
- *  header) — collision detection, not a fixed CSS direction. This is the same technique real
- *  positioning libraries (Floating UI, Popper) automate; here it's hand-rolled because the only two
- *  behaviors actually needed are "don't go past the left/right edge" and "flip if there's no room
- *  above," not the full general case those libraries solve. Portal + `position: fixed` also means it
- *  is never clipped by the modal's own `overflow-y: auto`, which an absolutely-positioned child would
- *  be if it tried to render outside its scroll container's box. */
-function Tooltip({ text, children }: { text: string; children: ReactNode }) {
-  const triggerRef = useRef<HTMLSpanElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; openDown: boolean } | null>(null);
-
-  function show() {
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const margin = 8;
-    const estimatedWidth = Math.min(300, window.innerWidth - margin * 2);
-    const left = Math.min(
-      Math.max(rect.left + rect.width / 2 - estimatedWidth / 2, margin),
-      window.innerWidth - estimatedWidth - margin,
-    );
-    const openDown = rect.top < 90; // not enough room above when this close to the modal header
-    setPos({ top: openDown ? rect.bottom + 8 : rect.top - 8, left, openDown });
-  }
-
-  return (
-    <span
-      ref={triggerRef}
-      className="sr-tt-trigger"
-      onMouseEnter={show}
-      onMouseLeave={() => setPos(null)}
-    >
-      {children}
-      {pos && createPortal(
-        <span
-          className="sr-tt-bubble"
-          style={{
-            left: pos.left,
-            top: pos.openDown ? pos.top : undefined,
-            bottom: pos.openDown ? undefined : window.innerHeight - pos.top,
-          }}
-        >
-          {text}
-        </span>,
-        document.body,
-      )}
-    </span>
-  );
-}
 
 /** The one explanation of "ask for different plans" vs "rewind and re-check", rendered from a single
  *  place so the two entry points can never drift apart in how they describe themselves.
@@ -348,7 +289,7 @@ interface SprintRecoveryModalProps {
 export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: SprintRecoveryModalProps) {
   const [state, setState] = useState<RecoveryStatusDto | null>(null);
   // Found live: closing this modal (or a real ai-service crash) loses `state.threadId` from browser
-  // memory, and "Analyze Sprint Health" always started a brand new thread — there was no way back to
+  // memory, and "Diagnose Sprint Risk" always started a brand new thread — there was no way back to
   // an in-progress check, even though it was still fully resumable server-side. True only for the
   // instant it takes to ask; the button below is hidden while this is true so it can't be raced.
   const [checkingForExisting, setCheckingForExisting] = useState(true);
@@ -621,7 +562,7 @@ export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: 
                 decision on a plan — nothing happens in Jira without your OK.
               </p>
               <button type="button" className="bl-btn bl-btn--primary" onClick={handleStart} disabled={starting}>
-                {starting ? <><span className="sr-spinner" aria-hidden="true" /> {stageLabel ?? 'Starting…'} ({elapsed}s)</> : 'Analyze Sprint Health'}
+                {starting ? <><span className="sr-spinner" aria-hidden="true" /> {stageLabel ?? 'Starting…'} ({elapsed}s)</> : 'Diagnose Sprint Risk'}
               </button>
             </>
           )}
@@ -632,7 +573,7 @@ export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: 
               {resumedExisting && (
                 <p className="sr-resumed-note">
                   Picked up a check already in progress for this sprint — nobody needed to click
-                  "Analyze" again to get back here.
+                  "Diagnose Sprint Risk" again to get back here.
                 </p>
               )}
               <div className="sr-status-row">
@@ -652,19 +593,18 @@ export function SprintRecoveryModal({ spaceId, sprintId, sprintName, onClose }: 
                     </span>
                   </Tooltip>
                 )}
-                {/* Real measured spend, not an estimate — every LLM call in this workflow reports its
-                    own token counts back, priced per model server-side. Worth putting next to the
-                    status rather than hiding in a metrics dashboard: "is this cheap enough to run on
-                    every sprint?" is a question about *this* check, and a number nobody can see is a
-                    number nobody can act on. Sub-cent runs still show a real figure rather than
-                    rounding to $0.00, which would read as "not measured". */}
+                {/* Token counts are real — every LLM call in this workflow reports its own usage back
+                    from the provider. The dollar figure is not: it's `tokens * a static $/model price
+                    table` (ai-service/app/llm/pricing.py), the same table that's already drifted from
+                    real pricing once in this project (see that file's "Found live" comment) — so it's
+                    an honest estimate against real usage, not billing data. Said explicitly in the
+                    tooltip rather than implied, and shown to 4 decimal places instead of collapsing
+                    every sub-cent run to "<$0.01", which hid the actual number this question is about. */}
                 {state.tokenUsage > 0 && (
-                  <Tooltip text={`${state.tokenUsage.toLocaleString()} tokens actually reported by the model provider across this check's LLM calls, priced per model. Real usage, not an estimate.`}>
+                  <Tooltip text={`${state.tokenUsage.toLocaleString()} tokens — a real count reported by the model provider. The $ figure is computed from a static price table (ai-service/app/llm/pricing.py), not billing data from the provider, so treat it as an estimate applied to real usage.`}>
                     <span className="sr-cost">
-                      {state.costUsd >= 0.01
-                        ? `$${state.costUsd.toFixed(2)}`
-                        : state.costUsd > 0
-                        ? `<$0.01`
+                      {state.costUsd > 0
+                        ? `$${state.costUsd.toFixed(state.costUsd >= 0.01 ? 2 : 4)}`
                         : 'free (local model)'}
                       {' · '}{(state.tokenUsage / 1000).toFixed(1)}k tokens
                     </span>
